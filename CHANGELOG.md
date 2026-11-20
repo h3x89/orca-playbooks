@@ -1,5 +1,17 @@
 # Changelog
 
+## 0.5.1
+
+- The timeline fits a narrow panel: times use the 24-hour clock, an event's text wraps to at most two
+  lines with the full text as a tooltip, and in a narrow panel the duration goes under the text. Tabs,
+  the workspace line and long ids wrap instead of running past the edge.
+- No blank panel after Orca starts: the panel says "Loading…" at once, the first answer no longer waits
+  for the first read of Orca Runs (the panel says agents are still being read and refreshes when the
+  read ends), and a conversation's agents load without holding up the rest of the panel.
+- Orca's "Worker stopped without reporting" escalation is hidden for a task that reported or finished
+  after it.
+- `AGENTS.md`: rules for people and coding agents who change this public repository.
+
 ## 0.5.0
 
 - Every view (playbook run, Orca Run, conversation) has the same tabs: Graph | Timeline | Agents. Where

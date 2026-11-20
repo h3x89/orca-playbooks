@@ -176,6 +176,8 @@ orca plugin test .         # parser, timeline, and full runs against a fake orca
 orca plugin types .        # writes the Orca typings to .orca/types/
 ```
 
+Before changing the repository, read `AGENTS.md`: it is public, so every commit and pull request is.
+
 ## Uninstall
 
 ```sh
