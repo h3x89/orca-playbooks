@@ -755,7 +755,8 @@
       }
       let pendingAgent = 0
       orca.plugin.on('runs.changed', () => { void load() })
-      orca.plugin.on('index.ready', () => { void load() })
+      // The first read of Orca Runs ended: handle it like the end of "indexing" even if this panel never saw that state.
+      orca.plugin.on('index.ready', () => { state.indexing = true; void load() })
       // Also fires when terminals of the same workspace open or close; load() resets the selection only on a real change.
       orca.on('workspace.changed', () => { if (!state.pinned) void load() })
       orca.on('agent.status.changed', () => {

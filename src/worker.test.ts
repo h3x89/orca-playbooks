@@ -278,16 +278,21 @@ test('follows the focused workspace and shows the other Orca Runs that worked th
 
 test('the first state.get does not wait for a slow first read of Orca Runs; index.ready follows once', async () => {
   const { host } = setup()
-  process.env.FAKE_ORCA_SLOW_RUN_LIST_MS = '3000'
+  process.env.FAKE_ORCA_SLOW_RUN_LIST_MS = '2500'
   const mounted = await mountWorker(worker, { host })
   const first = await mounted.request('state.get', {})
   assertPlainJson(first)
   assert.equal(first.indexing, true, 'answered while run-list was still sleeping')
   const later = await settled(() => mounted.request('state.get', {}))
   assert.equal(later.indexing, false)
-  // Later reads of the index (every 200 ms here) do not post it again.
-  await new Promise((resolve) => setTimeout(resolve, 3500))
+  // A second read of the index (older than 200 ms here, started by state.get) ends without posting it again.
+  const reads = () => calls().filter((call) => call[1] === 'run-list').length
+  await new Promise((resolve) => setTimeout(resolve, 300))
   await mounted.request('state.get', {})
+  // The fake CLI logs a call once its process runs; give it a moment.
+  for (let i = 0; i < 40 && reads() < 2; i += 1) await new Promise((resolve) => setTimeout(resolve, 50))
+  assert.ok(reads() >= 2, 'a second read started')
+  await new Promise((resolve) => setTimeout(resolve, 3000))
   assert.equal(mounted.posts.filter((post) => post.event === 'index.ready').length, 1, JSON.stringify(mounted.posts))
 })
 

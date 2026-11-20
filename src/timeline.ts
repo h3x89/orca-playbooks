@@ -79,7 +79,7 @@ export function buildTimeline(tasks: CliTask[], gates: CliGate[], messages: CliM
     const at = parseTime(message.created_at)
     if (at === undefined) continue
     const taskId = idsOf(message).taskId
-    if (message.type === 'escalation' && STOPPED_WITHOUT_REPORT.test(message.subject ?? '')) {
+    if (taskId && message.type === 'escalation' && STOPPED_WITHOUT_REPORT.test(message.subject ?? '')) {
       const { dispatchId } = idsOf(message)
       if (reports.some((report) => report.taskId === taskId && report.at !== undefined && report.at >= at && (!dispatchId || !report.dispatchId || report.dispatchId === dispatchId))) continue
     }

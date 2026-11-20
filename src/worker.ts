@@ -549,6 +549,8 @@ export default function activate(orca: OrcaWorkerApi): void {
   /** Refreshes which workspaces each recent Orca Run worked in (`worker-list` per Run, only for new or still active Runs). */
   function refreshIndex(): Promise<void> {
     indexing ??= (async () => {
+      // A retry after a failed first read is "indexing" again until it ends.
+      firstReadFailed = false
       const listed = await orcaCli(['orchestration', 'run-list', '--full'])
       const rows = (Array.isArray(listed.runs) ? (listed.runs as Record<string, unknown>[]) : [])
         .map((row) => ({ id: String(row.id), objective: String(row.objective ?? ''), createdAt: Date.parse(String(row.created_at)) || 0, updatedAt: Date.parse(String(row.updated_at)) || 0 }))
@@ -574,7 +576,6 @@ export default function activate(orca: OrcaWorkerApi): void {
       const first = !indexedAt
       indexedAt = Date.now()
       // A panel that got an answer while this first read was running shows "reading"; tell it to ask again.
-      firstReadFailed = false
       if (first) orca.panels.post('index.ready', {})
     })().catch((error) => {
       if (!indexedAt) firstReadFailed = true
