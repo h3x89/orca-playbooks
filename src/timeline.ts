@@ -17,6 +17,17 @@ export function parseTime(value: unknown): number | undefined {
   return Number.isNaN(parsed) ? undefined : parsed
 }
 
+/** Orca's escalation when a worker's session ends before worker_done (its subject for the "finished" case). */
+const STOPPED_WITHOUT_REPORT = /^worker stopped without reporting$/i
+
+function idsOf(message: CliMessage): { taskId?: string; dispatchId?: string } {
+  const payload = payloadOf(message)
+  return {
+    taskId: typeof payload.taskId === 'string' ? payload.taskId : undefined,
+    dispatchId: typeof payload.dispatchId === 'string' ? payload.dispatchId : undefined
+  }
+}
+
 function payloadOf(message: CliMessage): Record<string, unknown> {
   const raw = message.payload
   if (raw && typeof raw === 'object') return raw as Record<string, unknown>
@@ -62,10 +73,16 @@ export function buildTimeline(tasks: CliTask[], gates: CliGate[], messages: CliM
     if (start !== undefined && !(open && started === undefined)) spans.push({ taskId: task.id, start, end: open ? undefined : ended ?? start })
   }
 
+  // Reports per worker: Orca's "stopped without reporting" escalation is false when the same dispatch reported later.
+  const reports = messages.filter((message) => message.type === 'worker_done').map((message) => ({ at: parseTime(message.created_at), ...idsOf(message) }))
   for (const message of messages) {
     const at = parseTime(message.created_at)
     if (at === undefined) continue
-    const taskId = typeof payloadOf(message).taskId === 'string' ? (payloadOf(message).taskId as string) : undefined
+    const taskId = idsOf(message).taskId
+    if (message.type === 'escalation' && STOPPED_WITHOUT_REPORT.test(message.subject ?? '')) {
+      const { dispatchId } = idsOf(message)
+      if (reports.some((report) => report.taskId === taskId && report.at !== undefined && report.at >= at && (!dispatchId || !report.dispatchId || report.dispatchId === dispatchId))) continue
+    }
     const kind = message.type === 'worker_done' ? 'report' : message.type === 'question' ? 'question' : message.type === 'escalation' ? 'escalation' : 'message'
     push({ at, kind, taskId, title: (taskId && titles.get(taskId)) || message.subject || message.type || 'message', detail: message.subject && taskId ? message.subject : undefined })
   }
@@ -98,21 +115,12 @@ export function buildTimeline(tasks: CliTask[], gates: CliGate[], messages: CliM
 }
 
 const NEAR = 3000
-/** Orca's own escalation when it loses sight of a worker; false when the worker reports later. */
-const STOPPED_WITHOUT_REPORT = /stopped without reporting/i
 
-/**
- * One row where Orca records two things at once: a start right after creation, a report right at the end.
- * Drops Orca's "stopped without reporting" escalation for a task that did report or finish after it.
- */
+/** One row where Orca records two things at once: a start right after creation, a report right at the end. */
 function merged(events: TimelineEvent[]): TimelineEvent[] {
   const drop = new Set<TimelineEvent>()
   for (const event of events) {
     if (!event.taskId) continue
-    if (event.kind === 'escalation' && STOPPED_WITHOUT_REPORT.test(event.detail ?? '')) {
-      const later = events.some((other) => other.taskId === event.taskId && other.at >= event.at && (other.kind === 'report' || other.kind === 'done'))
-      if (later) drop.add(event)
-    }
     if (event.kind === 'created') {
       const start = events.find((other) => other.kind === 'started' && other.taskId === event.taskId && Math.abs(other.at - event.at) <= NEAR)
       if (start) {

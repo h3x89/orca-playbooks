@@ -225,6 +225,8 @@ export default function activate(orca: OrcaWorkerApi): void {
   const index = new Map<string, OrcaRunSummary & { paths: string[]; bySession: Record<string, number> }>()
   let indexing: Promise<void> | undefined
   let indexedAt = 0
+  /** The first read of Orca Runs failed: say so by ending "indexing" instead of promising agents that never come. */
+  let firstReadFailed = false
   /** Launch options per dispatch: they never change, so `worker-show` is asked once. */
   const launches = new Map<string, ReturnType<typeof launchOf>>()
   /** Which conversation dispatched a task (`dispatch-show` → `creator_orca_session_id`); fixed once known. */
@@ -572,8 +574,12 @@ export default function activate(orca: OrcaWorkerApi): void {
       const first = !indexedAt
       indexedAt = Date.now()
       // A panel that got an answer while this first read was running shows "reading"; tell it to ask again.
+      firstReadFailed = false
       if (first) orca.panels.post('index.ready', {})
-    })().finally(() => {
+    })().catch((error) => {
+      if (!indexedAt) firstReadFailed = true
+      throw error
+    }).finally(() => {
       indexing = undefined
     })
     return indexing
@@ -614,7 +620,7 @@ export default function activate(orca: OrcaWorkerApi): void {
     // being read and asks again on `index.ready`, instead of staying blank for the whole read.
     if (!indexedAt) await Promise.race([refreshIndex().catch(() => undefined), new Promise((resolve) => setTimeout(resolve, FIRST_INDEX_WAIT_MS))])
     else if (Date.now() - indexedAt > indexMs()) void refreshIndex().catch(() => undefined)
-    const indexing = !indexedAt
+    const stillIndexing = !indexedAt && !firstReadFailed
     const mine = chosen ? runs.filter((run) => run.workspaceId === chosen!.id || run.workspacePath === chosen!.path) : []
     const live = chosen && mine.some((run) => run.status === 'running' || run.status === 'waiting') ? await agentsByTask(chosen.id) : new Map<string, AgentLive>()
     const shown = mine.map((run) => {
@@ -644,7 +650,7 @@ export default function activate(orca: OrcaWorkerApi): void {
       : []
     const waitingElsewhere = runs.filter((run) => run.status === 'waiting' && run.workspaceId !== chosen?.id)
       .map((run) => ({ runId: run.id, title: run.title, workspaceId: run.workspaceId, workspaceName: run.workspaceName }))
-    return json({ workspaces: list, workspaceId: chosen?.id ?? null, following, indexing, playbooks: chosen ? await playbooksIn(chosen) : [], runs: shown, orcaRuns, sessions, waitingElsewhere })
+    return json({ workspaces: list, workspaceId: chosen?.id ?? null, following, indexing: stillIndexing, playbooks: chosen ? await playbooksIn(chosen) : [], runs: shown, orcaRuns, sessions, waitingElsewhere })
   })
 
   orca.panels.handle('orca.run', async ({ runId }) => {

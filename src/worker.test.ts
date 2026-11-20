@@ -57,7 +57,8 @@ function setup() {
     PLAYBOOKS_POLL_MS: '100',
     PLAYBOOKS_INDEX_MS: '200',
     FAKE_ORCA_FAIL_WORKER: '',
-    FAKE_ORCA_SLOW_RUN_LIST_MS: ''
+    FAKE_ORCA_SLOW_RUN_LIST_MS: '',
+    FAKE_ORCA_FAIL_RUN_LIST: ''
   })
   const other = path.join(dir, 'other')
   mkdirSync(other)
@@ -275,18 +276,28 @@ test('follows the focused workspace and shows the other Orca Runs that worked th
   assert.deepEqual(mounted.refusals, [])
 })
 
-test('the first state.get does not wait for a slow first read of Orca Runs; index.ready follows', async () => {
+test('the first state.get does not wait for a slow first read of Orca Runs; index.ready follows once', async () => {
   const { host } = setup()
   process.env.FAKE_ORCA_SLOW_RUN_LIST_MS = '3000'
   const mounted = await mountWorker(worker, { host })
-  const asked = Date.now()
   const first = await mounted.request('state.get', {})
   assertPlainJson(first)
-  assert.equal(first.indexing, true)
-  assert.ok(Date.now() - asked < 2900, `answered after ${Date.now() - asked} ms`)
+  assert.equal(first.indexing, true, 'answered while run-list was still sleeping')
   const later = await settled(() => mounted.request('state.get', {}))
   assert.equal(later.indexing, false)
-  assert.ok(mounted.posts.some((post) => JSON.stringify(post).includes('index.ready')), JSON.stringify(mounted.posts))
+  // Later reads of the index (every 200 ms here) do not post it again.
+  await new Promise((resolve) => setTimeout(resolve, 3500))
+  await mounted.request('state.get', {})
+  assert.equal(mounted.posts.filter((post) => post.event === 'index.ready').length, 1, JSON.stringify(mounted.posts))
+})
+
+test('a failed first read of Orca Runs ends indexing instead of promising agents', async () => {
+  const { host } = setup()
+  process.env.FAKE_ORCA_FAIL_RUN_LIST = '1'
+  const mounted = await mountWorker(worker, { host })
+  const answer = await settled(() => mounted.request('state.get', {}))
+  assert.equal(answer.indexing, false)
+  assert.deepEqual(answer.orcaRuns, [])
 })
 
 test('gate answers: only ok or revise[: comment] count, popraw as the legacy name of revise', () => {

@@ -67,6 +67,10 @@ switch (command) {
     ok({ count: state.messages.length, messages: state.messages.filter((message) => message.runId === flag('--run')) })
     break
   case 'run-list':
+    if (process.env.FAKE_ORCA_FAIL_RUN_LIST) {
+      process.stdout.write(JSON.stringify({ ok: false, error: { message: 'run-list failed' } }))
+      process.exit(1)
+    }
     ok({ runs: state.runs })
     break
   case 'dispatch-show': {

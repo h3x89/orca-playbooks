@@ -180,6 +180,7 @@
           if (answer.workspaceId !== state.workspaceId) { state.sel = null; state.selected = null; state.picked = false }
           // The first answer after a start can come before Orca's Runs were read: choose again once they are, unless the person chose.
           if (state.indexing && !answer.indexing) {
+            indexEpoch += 1
             if (!state.picked) state.sel = null
             // A conversation read before the Runs were all known may miss agents: read it again.
             for (const key of Object.keys(state.sessionViews)) { delete state.sessionViews[key]; delete state.timelines[key] }
@@ -492,6 +493,8 @@
 
       const sessionLoads = new Set()
       const sessionFailedAt = {}
+      /** Raised when the first read of Orca Runs ends: a conversation load started before it may miss agents and is dropped. */
+      let indexEpoch = 0
       /**
        * Starts loading a conversation's agents without waiting: render() shows "Loading…" meanwhile and draws again when
        * the load ends. One load per conversation at a time; after a failure the next try waits 10 s (no tight retry loop).
@@ -505,14 +508,17 @@
         const key = `ses:${session.id}`
         if (sessionLoads.has(key)) return
         sessionLoads.add(key)
+        const epoch = indexEpoch
         try {
           const view = session.runIds?.length
             ? await orca.plugin.request('session.view', { sessionId: session.id, runIds: session.runIds }, { timeoutMs: 120000 })
             : { agents: [], events: [], lanes: 0 }
+          if (epoch !== indexEpoch) return // built from Runs known before the read ended; render() starts a fresh load
           state.sessionViews[key] = view
           state.timelines[key] = { events: view.events, lanes: view.lanes }
           delete state.timelineErrors[key]
         } catch (error) {
+          if (epoch !== indexEpoch) return
           state.timelineErrors[key] = error.message ?? String(error)
           sessionFailedAt[key] = Date.now()
         } finally {

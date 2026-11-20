@@ -7,9 +7,9 @@
   the workspace line and long ids wrap instead of running past the edge.
 - No blank panel after Orca starts: the panel says "Loading…" at once, the first answer no longer waits
   for the first read of Orca Runs (the panel says agents are still being read and refreshes when the
-  read ends), and a conversation's agents load without holding up the rest of the panel.
-- Orca's "Worker stopped without reporting" escalation is hidden for a task that reported or finished
-  after it.
+  read ends), and a conversation's agents load without holding up the rest of the panel. The worker
+  starts that read when it activates, also while the panel is closed.
+- Orca's "Worker stopped without reporting" escalation is hidden when the same worker reported after it.
 - `AGENTS.md`: rules for people and coding agents who change this public repository.
 
 ## 0.5.0
