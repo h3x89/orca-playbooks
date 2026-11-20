@@ -1,0 +1,744 @@
+<!doctype html>
+<html lang="en">
+  <head>
+    <meta charset="utf-8" />
+    <style>
+      :root {
+        --fg: var(--orca-foreground, #e6e6e6);
+        --bg: var(--orca-background, #1b1b1b);
+        --muted: color-mix(in srgb, var(--fg) 58%, transparent);
+        --line: color-mix(in srgb, var(--fg) 22%, transparent);
+        --card: color-mix(in srgb, var(--fg) 6%, var(--bg));
+        --plan: color-mix(in srgb, var(--fg) 30%, transparent);
+        --pending: #8a8f98;
+        --ready: #5b8def;
+        --running: #e0a43a;
+        --done: #3fb27f;
+        --failed: #e5534b;
+        --gate: #b57edc;
+        --ask: #f2994a;
+      }
+      * { box-sizing: border-box; }
+      body { margin: 0; padding: 12px; font: 13px system-ui, sans-serif; color: var(--fg); background: var(--bg); }
+      h1 { font-size: 15px; margin: 0 0 8px; display: flex; align-items: center; gap: 8px; }
+      label { display: block; color: var(--muted); font-size: 11px; margin: 8px 0 3px; }
+      select, textarea, button { font: inherit; color: var(--fg); background: var(--card); border: 1px solid var(--line); border-radius: 6px; }
+      select { width: 100%; padding: 5px 6px; }
+      textarea { width: 100%; padding: 6px; min-height: 52px; resize: vertical; }
+      button { padding: 5px 12px; cursor: pointer; }
+      button.small { padding: 2px 8px; font-size: 11.5px; }
+      button:disabled { opacity: .5; cursor: default; }
+      code { font-size: 11px; }
+      pre { white-space: pre-wrap; word-break: break-word; margin: 6px 0 0; padding: 8px; border-radius: 6px; background: color-mix(in srgb, var(--fg) 4%, var(--bg)); border: 1px solid var(--line); font-size: 11.5px; max-height: 260px; overflow: auto; }
+      .row { display: flex; gap: 8px; align-items: center; margin-top: 8px; flex-wrap: wrap; }
+      .primary { background: #2f6bf2; border-color: #2f6bf2; color: #fff; }
+      .ok { background: var(--done); border-color: var(--done); color: #fff; }
+      .danger { background: transparent; border-color: var(--failed); color: var(--failed); }
+      .msg { margin-top: 6px; color: var(--muted); min-height: 14px; white-space: pre-wrap; }
+      .err { color: var(--failed); }
+      .badge { font-size: 11px; padding: 2px 8px; border-radius: 10px; border: 1px solid currentColor; font-weight: 500; }
+      .card { border: 1px solid var(--line); border-radius: 8px; padding: 10px; margin-top: 10px; background: var(--card); }
+      .where { display: flex; align-items: center; gap: 8px; justify-content: space-between; padding: 6px 8px; border-radius: 8px; background: var(--card); border: 1px solid var(--line); }
+      .where b { font-weight: 600; }
+      .banner { margin-top: 8px; padding: 6px 8px; border-radius: 8px; border: 1px solid var(--gate); color: var(--gate); display: flex; justify-content: space-between; align-items: center; gap: 8px; }
+      .gate { border-color: var(--gate); border-width: 2px; }
+      .gate h2 { font-size: 13px; margin: 0 0 6px; color: var(--gate); }
+      .graph { margin-top: 10px; }
+      svg text { fill: var(--fg); font: 12px system-ui, sans-serif; }
+      svg .sub { fill: var(--muted); font-size: 11px; }
+      svg g.node { cursor: pointer; }
+      details summary { cursor: pointer; color: var(--muted); font-size: 11.5px; margin-top: 3px; }
+      .muted { color: var(--muted); }
+      .small { font-size: 11px; }
+      .drawer h3 { margin: 0 0 4px; font-size: 13px; }
+      .tabs { display: flex; gap: 6px; margin-top: 10px; }
+      .tabs button { padding: 3px 10px; font-size: 12px; }
+      .tabs button.on { border-color: var(--fg); font-weight: 600; }
+      .timeline { margin-top: 8px; max-height: 520px; overflow: auto; border: 1px solid var(--line); border-radius: 8px; }
+      .tl-head { padding: 6px 8px; color: var(--muted); font-size: 11px; border-bottom: 1px solid var(--line); position: sticky; top: 0; background: var(--bg); }
+      .tl-row { display: grid; grid-template-columns: auto 38px 16px 1fr auto; gap: 6px; align-items: start; padding: 3px 8px; font-size: 12px; cursor: default; }
+      .tl-row[data-task] { cursor: pointer; }
+      .tl-row.sel { background: var(--card); }
+      .tl-gap { padding: 2px 8px 2px 60px; color: var(--muted); font-size: 11px; font-style: italic; }
+      .lanes { display: inline-flex; gap: 2px; height: 16px; }
+      .lanes i { display: inline-block; width: 4px; height: 16px; border-radius: 2px; }
+      .tl-time, .tl-dur { color: var(--muted); font-variant-numeric: tabular-nums; }
+      .tree { margin-top: 10px; }
+      .srow { display: grid; grid-template-columns: 14px 1fr auto; gap: 6px; padding: 5px 6px; border-radius: 6px; cursor: pointer; }
+      .srow:hover, .srow.sel { background: var(--card); }
+      .srow .dot { width: 9px; height: 9px; border-radius: 50%; margin-top: 4px; }
+      .indent { margin-left: 16px; border-left: 1px solid var(--line); padding-left: 6px; }
+      .legend { display: flex; gap: 10px; flex-wrap: wrap; margin-top: 6px; font-size: 11px; color: var(--muted); }
+      .legend i { display: inline-block; width: 9px; height: 9px; border-radius: 2px; margin-right: 4px; vertical-align: -1px; }
+    </style>
+  </head>
+  <body>
+    <h1>Playbooks <span id="runBadge"></span></h1>
+    <div id="where" class="where"></div>
+    <div id="pickWrap" style="display:none">
+      <label for="workspace">Workspace</label>
+      <select id="workspace"></select>
+    </div>
+    <div id="banner"></div>
+
+    <label for="playbook">Playbook from <code>.orca/playbooks/</code></label>
+    <select id="playbook"></select>
+    <div id="description" class="muted small" style="margin-top:4px"></div>
+    <div class="row">
+      <button id="start" class="primary">Start</button>
+      <button id="refresh">Refresh</button>
+    </div>
+    <div id="msg" class="msg"></div>
+
+    <label for="run">Run or conversation</label>
+    <select id="run"></select>
+    <div id="gate"></div>
+    <div id="sessionView"></div>
+    <div id="tabs" class="tabs"></div>
+    <div id="graphNote"></div>
+    <div class="graph" id="graphWrap"><svg id="graph" width="10" height="10"></svg></div>
+    <div id="timeline"></div>
+    <div id="agentsList"></div>
+    <div id="drawer"></div>
+    <div class="legend">
+      <span><i style="background:var(--pending)"></i>waiting for earlier steps</span>
+      <span><i style="background:var(--running)"></i>working</span>
+      <span><i style="background:var(--ask)"></i>agent waits for permission</span>
+      <span><i style="background:var(--gate)"></i>waiting for you</span>
+      <span><i style="background:var(--done)"></i>done</span>
+      <span><i style="background:var(--failed)"></i>failed / sent back</span>
+    </div>
+    <div id="footer" class="muted small" style="margin-top:8px"></div>
+
+    <script>
+      const $ = (id) => document.getElementById(id)
+      const state = {
+        workspaceId: null, following: false, pinned: null, workspaces: [], playbooks: [], runs: [], orcaRuns: [], waitingElsewhere: [],
+        sel: null, nodes: {}, selected: null, lines: {}, busy: false, openOutputs: new Set(),
+        sessions: [], view: null, timelines: {}, timelineErrors: {}, stale: new Set(), sessionViews: {}, showAllAgents: false, selectedSession: null, followBottom: true, detailsOpen: {}
+      }
+      const STATUS = {
+        pending: ['waiting for earlier steps', 'var(--pending)'],
+        ready: ['ready', 'var(--ready)'],
+        dispatched: ['working', 'var(--running)'],
+        blocked: ['waiting', 'var(--pending)'],
+        waiting: ['waiting for you', 'var(--gate)'],
+        completed: ['done', 'var(--done)'],
+        failed: ['failed', 'var(--failed)']
+      }
+      const LIVE = {
+        working: ['working', 'var(--running)'],
+        blocked: ['waits for permission ↗', 'var(--ask)'],
+        waiting: ['waits for an answer ↗', 'var(--ask)']
+      }
+      const RUN = { running: 'running', waiting: 'waiting for you', done: 'finished', failed: 'failed', rejected: 'sent back' }
+      const RUN_COLOR = { running: 'var(--running)', waiting: 'var(--gate)', done: 'var(--done)', failed: 'var(--failed)', rejected: 'var(--failed)' }
+
+      function esc(value) {
+        return String(value ?? '').replace(/[&<>"']/g, (c) => ({ '&': '&amp;', '<': '&lt;', '>': '&gt;', '"': '&quot;', "'": '&#39;' })[c])
+      }
+      function cut(value, max) { return value.length > max ? value.slice(0, max - 1) + '…' : value }
+      function setMsg(text, error) {
+        $('msg').textContent = text || ''
+        $('msg').className = error ? 'msg err' : 'msg'
+      }
+      function option(value, label, selected) {
+        const element = document.createElement('option')
+        element.value = value
+        element.textContent = label
+        element.selected = selected
+        return element
+      }
+      function ago(since) {
+        if (!since) return ''
+        const seconds = Math.max(0, Math.round((Date.now() - since) / 1000))
+        return seconds < 60 ? `${seconds} s` : seconds < 3600 ? `${Math.floor(seconds / 60)}:${String(seconds % 60).padStart(2, '0')}` : `${Math.floor(seconds / 3600)} h ${Math.floor((seconds % 3600) / 60)} min`
+      }
+      // Dates and times follow Orca's locale; the words are English.
+      const LOCALE = orca.locale || undefined
+      function time(ms) { return new Date(ms).toLocaleString(LOCALE, { day: '2-digit', month: '2-digit', hour: '2-digit', minute: '2-digit' }) }
+
+      let loads = 0
+      async function load() {
+        const mine = ++loads
+        try {
+          // Orca accepts only plain JSON: leave the key out instead of sending undefined.
+          const answer = await orca.plugin.request('state.get', state.pinned ? { workspaceId: state.pinned } : {}, { timeoutMs: 60000 })
+          if (mine !== loads) return // a newer load started meanwhile; its answer wins
+          if (answer.workspaceId !== state.workspaceId) { state.sel = null; state.selected = null }
+          Object.assign(state, {
+            workspaceId: answer.workspaceId, following: answer.following, workspaces: answer.workspaces, playbooks: answer.playbooks,
+            runs: answer.runs, orcaRuns: answer.orcaRuns, sessions: answer.sessions ?? [], waitingElsewhere: answer.waitingElsewhere
+          })
+          renderControls()
+          await render()
+        } catch (error) {
+          setMsg(`Could not load: ${error.message ?? error}`, true)
+        }
+      }
+
+      function workspace() { return state.workspaces.find((w) => w.id === state.workspaceId) ?? null }
+
+      function renderControls() {
+        const ws = workspace()
+        const mode = state.pinned ? 'pinned' : state.following ? 'follows the active workspace' : 'cannot tell which one is active'
+        $('where').innerHTML = ws
+          ? `<span><b>${esc(ws.name)}</b>${ws.branch ? ' · ' + esc(ws.branch) : ''} <span class="muted small">— ${esc(mode)}</span></span>` +
+            `<button id="pin" class="small">${state.pinned ? 'Unpin' : 'Pin'}</button>`
+          : '<span class="muted">No workspace in focus.</span>'
+        if ($('pin')) $('pin').onclick = () => { state.pinned = state.pinned ? null : state.workspaceId; state.sel = null; void load() }
+        $('pickWrap').style.display = !state.pinned && !state.following ? '' : 'none'
+        $('workspace').replaceChildren(...state.workspaces.map((w) => option(w.id, `${w.name}${w.branch ? ' · ' + w.branch : ''} — ${w.path}`, w.id === state.workspaceId)))
+        $('banner').innerHTML = state.waitingElsewhere.map((w) =>
+          `<div class="banner"><span>◆ ${esc(w.title)} waits for you in <b>${esc(w.workspaceName)}</b></span><button class="small" data-goto="${esc(w.workspaceId)}">Go</button></div>`).join('')
+        for (const button of $('banner').querySelectorAll('button[data-goto]')) {
+          button.onclick = () => orca.plugin.request('workspace.goto', { workspaceId: button.dataset.goto }).catch((error) => setMsg(error.message ?? String(error), true))
+        }
+        const pb = $('playbook')
+        const current = pb.value
+        pb.replaceChildren(...(state.playbooks.length
+          ? state.playbooks.map((p) => option(p.file, p.errors.length ? `${p.title} (errors in the file)` : p.title, p.file === current))
+          : [option('', 'No playbooks in .orca/playbooks/ of this workspace', true)]))
+        // A helper whose parent session lives in another workspace is shown on its own here.
+        // A worker that itself dispatched agents is a conversation too.
+        const roots = state.sessions.filter((session) => (!session.isWorker || session.agents) && (!session.parentPaneKey || !state.sessions.some((other) => other.paneKey === session.parentPaneKey)))
+        const choices = [
+          ...state.runs.map((r) => ({ key: `pb:${r.id}`, label: `Playbook: ${r.title} · ${RUN[r.status] ?? r.status} · ${time(r.createdAt)}`, at: r.createdAt })),
+          ...state.orcaRuns.map((r) => ({ key: `orca:${r.id}`, label: `Orca Run: ${cut(r.title || r.objective || r.id, 60)}${r.active ? ' · running' : ''} · ${time(r.createdAt)}`, at: r.createdAt })),
+          ...roots.map((session) => ({ key: `ses:${session.id}`, label: `Conversation: ${cut(session.title, 50)} · ${session.agents ? agentsWord(session.agents) : sessionStatus(session)[0]}`, at: session.updatedAt ?? session.since ?? 0 }))
+        ].sort((a, b) => b.at - a.at)
+        if (!state.sel || !choices.some((choice) => choice.key === state.sel)) {
+          const waiting = state.runs.find((r) => r.status === 'waiting') ?? state.runs.find((r) => r.status === 'running')
+          const activeRun = state.orcaRuns.find((r) => r.active)
+          // A conversation that started agents comes first: that is what the user means by "the run"; the most recent one wins.
+          const withAgents = roots.filter((session) => session.agents).sort((a, b) => (b.updatedAt ?? 0) - (a.updatedAt ?? 0))[0]
+          const busySession = roots.find((session) => ['working', 'blocked', 'waiting', 'permission'].includes(session.state))
+          state.sel = waiting ? `pb:${waiting.id}` : withAgents ? `ses:${withAgents.id}` : activeRun ? `orca:${activeRun.id}` : busySession ? `ses:${busySession.id}` : choices[0]?.key ?? null
+          state.selected = null
+          state.selectedSession = null
+          state.view = null
+        }
+        $('run').replaceChildren(...(choices.length ? choices.map((c) => option(c.key, c.label, c.key === state.sel)) : [option('', 'No runs or conversations in this workspace', true)]))
+        $('start').disabled = state.busy || !state.playbooks.some((p) => p.file === pb.value && !p.errors.length)
+      }
+
+      const SESSION = {
+        working: ['working', 'var(--running)'],
+        blocked: ['waits for permission', 'var(--ask)'],
+        permission: ['waits for permission', 'var(--ask)'],
+        waiting: ['waiting for you', 'var(--gate)'],
+        done: ['finished', 'var(--done)'],
+        active: ['active', 'var(--running)'],
+        inactive: ['idle', 'var(--pending)']
+      }
+      const CHILD = { command: '⚙ background command', agent: '🤖 subagent', workflow: '↻ workflow', monitor: '◎ monitor' }
+      function helpers(session) { return state.sessions.filter((other) => other.parentPaneKey && other.parentPaneKey === session.paneKey) }
+      function selectedSession() { return state.sel?.startsWith('ses:') ? state.sessions.find((session) => `ses:${session.id}` === state.sel) ?? null : null }
+      function clock(ms) { return new Date(ms).toLocaleTimeString(LOCALE, { hour: '2-digit', minute: '2-digit' }) }
+      function span(ms) {
+        if (ms === undefined || ms === null) return ''
+        const seconds = Math.round(ms / 1000)
+        return seconds < 60 ? `${seconds} s` : seconds < 3600 ? `${Math.floor(seconds / 60)} min ${seconds % 60 ? (seconds % 60) + ' s' : ''}`.trim() : `${Math.floor(seconds / 3600)} h ${Math.floor((seconds % 3600) / 60)} min`
+      }
+
+      function playbookRun() { return state.sel?.startsWith('pb:') ? state.runs.find((r) => `pb:${r.id}` === state.sel) ?? null : null }
+      function orcaRunId() { return state.sel?.startsWith('orca:') ? state.sel.slice(5) : null }
+
+      /** One shape for both kinds of nodes: playbook steps and tasks of any Orca Run. */
+      function viewNodes() {
+        const run = playbookRun()
+        if (run) {
+          return run.steps.map((step) => {
+            const task = run.tasks[step.id]
+            let [label, color] = !task ? ['plan', 'var(--plan)']
+              : step.kind === 'gate' && task.gateId && !task.decision ? STATUS.waiting
+              : step.kind === 'gate' && task.decision && task.decision !== 'ok' ? ['sent back', 'var(--failed)']
+              : STATUS[task.status] ?? [task.status, 'var(--pending)']
+            if (task?.live && LIVE[task.live.state]) [label, color] = LIVE[task.live.state]
+            const sub = step.kind === 'gate' ? 'gate · your decision' : step.kind === 'script' ? `script · ${step.run}` : [step.agent, step.model].filter(Boolean).join(' · ')
+            return { id: step.id, title: step.title, sub, label, color, needs: step.needs, depth: step.depth, kind: step.kind, loop: step.loop,
+              attempt: task?.attempt ?? 1, live: task?.live, since: task?.live?.since ?? task?.startedAt, dispatchId: task?.dispatchId && task.dispatchId !== 'failed' && task.dispatchId !== 'started' ? task.dispatchId : null,
+              workspaceId: run.workspaceId, status: task?.status, startedAt: task?.startedAt, endedAt: task?.endedAt, result: task?.output, error: task?.error, decision: task?.decision, comment: task?.comment, waitingFor: step.needs.filter((need) => run.tasks[need]?.status !== 'completed') }
+          })
+        }
+        const runId = orcaRunId()
+        const nodes = runId ? state.nodes[runId] ?? [] : []
+        const titles = Object.fromEntries(nodes.map((node) => [node.id, node.title]))
+        return nodes.map((node) => {
+          let [label, color] = STATUS[node.status] ?? [node.status, 'var(--pending)']
+          if (node.live && LIVE[node.live.state]) [label, color] = LIVE[node.live.state]
+          return { id: node.id, title: node.title, sub: [node.agent, node.model, node.effort].filter(Boolean).join(' · ') || 'task', label, color, needs: node.needs, depth: node.depth, kind: 'agent',
+            attempt: 1, live: node.live, since: node.live?.since, dispatchId: node.dispatchId, workspacePath: node.workspacePath, result: node.result, status: node.status, startedAt: node.createdAt,
+            outcome: node.outcome, waitingFor: node.needs.filter((need) => nodes.find((n) => n.id === need)?.status !== 'completed').map((need) => titles[need] ?? need) }
+        })
+      }
+
+      /** Which tab a selection opens on: the graph where steps declare `needs`, else the timeline. */
+      function defaultView(kind, nodes) {
+        if (kind === 'playbook') return 'graph'
+        if (kind === 'orca') return nodes.some((node) => node.needs.length) ? 'graph' : 'timeline'
+        return 'timeline'
+      }
+
+      /** The same tab row for a playbook run, an Orca Run and a conversation; a plan preview has only its graph. */
+      function renderTabs(kind, view, agentCount) {
+        if (kind === 'preview') { $('tabs').innerHTML = ''; return }
+        const tab = (id, label) => `<button data-view="${id}" class="${view === id ? 'on' : ''}">${esc(label)}</button>`
+        $('tabs').innerHTML = tab('graph', 'Graph') + tab('timeline', 'Timeline') + tab('agents', `Agents (${agentCount ?? '…'})`)
+        for (const button of $('tabs').querySelectorAll('button')) button.onclick = () => { state.view = button.dataset.view; state.followBottom = true; void render() }
+      }
+
+      /** Why the Graph tab has no graph here, and how to get one. */
+      function graphNote(kind, nodes) {
+        const how = 'to get one, write the work as a playbook in <code>.orca/playbooks/</code> (steps linked by <code>needs</code>) and start it from this panel.'
+        if (kind === 'session') return `A conversation starts its agents one by one without declaring which waits for which, so there is no graph; ${how}`
+        if (kind === 'orca' && nodes.length && !nodes.some((node) => node.needs.length)) return `This Orca Run declares no dependencies between its tasks, so a graph would only show unrelated boxes (the Timeline shows what ran in parallel); ${how}`
+        if (kind === 'orca' && !nodes.length) return 'This Orca Run has no tasks to draw yet (or they could not be read; try Refresh).'
+        return ''
+      }
+
+      async function render() {
+        const session = selectedSession()
+        const run = playbookRun()
+        const runId = orcaRunId()
+        const wanted = state.sel
+        const key = session ? `ses:${session.id}` : null
+        if (session) {
+          if (!state.sessionViews[key]) await loadSessionView(session)
+          else if (state.stale.has(key)) {
+            state.stale.delete(key)
+            void loadSessionView(session).then(() => { if (state.sel === key) void render() })
+          }
+        } else if (runId && !state.nodes[runId]) await loadOrcaRun(runId)
+        if (state.sel !== wanted) return // the person picked something else while this was loading
+        const kind = session ? 'session' : run ? 'playbook' : runId ? 'orca' : 'preview'
+        const playbook = state.playbooks.find((p) => p.file === $('playbook').value)
+        $('description').textContent = playbook?.description ?? ''
+        $('runBadge').innerHTML = run ? `<span class="badge" style="color:${RUN_COLOR[run.status] ?? 'inherit'}">${esc(RUN[run.status] ?? run.status)}</span>` : ''
+        if (!state.sel && playbook?.errors?.length) setMsg('Errors in the file:\n' + playbook.errors.join('\n'), true)
+        const sessionView = key ? state.sessionViews[key] : null
+        const nodes = kind === 'session' ? (sessionView?.agents ?? []).map(agentNode)
+          : kind === 'preview' ? (playbook?.steps ?? []).map((step) => ({ id: step.id, title: step.title, sub: step.kind === 'gate' ? 'gate' : step.kind === 'script' ? `script · ${step.run}` : [step.agent, step.model].filter(Boolean).join(' · '), label: 'plan', color: 'var(--plan)', needs: step.needs, depth: step.depth, kind: step.kind, loop: step.loop, attempt: 1 }))
+          : viewNodes()
+        const agents = kind === 'session' ? nodes : nodes.filter((node) => node.kind === 'agent' && (kind === 'playbook' || node.dispatchId))
+        const view = kind === 'preview' ? 'graph' : state.view ?? defaultView(kind, nodes)
+        renderTabs(kind, view, kind === 'session' && !sessionView ? null : agents.length)
+        if (session) renderSessionHead(session, sessionView)
+        else $('sessionView').innerHTML = ''
+        const note = view === 'graph' ? graphNote(kind, nodes) : ''
+        $('graphWrap').style.display = view === 'graph' && !note ? '' : 'none'
+        $('graphNote').innerHTML = note ? `<div class="card muted">${note}</div>` : ''
+        if (view !== 'timeline') $('timeline').innerHTML = ''
+        if (view !== 'agents') $('agentsList').innerHTML = ''
+        if (view === 'graph' && !note) drawGraph(nodes, run)
+        else if (view === 'agents') renderAgents(agents, kind === 'session' && !sessionView)
+        else if (view === 'timeline' && kind === 'session') {
+          if (sessionView) renderTimeline(key, null)
+          else $('timeline').innerHTML = ''
+        } else if (view === 'timeline') {
+          const anyRun = run?.id ?? runId
+          if (!state.timelines[anyRun]) {
+            renderTimeline(anyRun, run)
+            await loadTimeline(anyRun)
+            if (state.sel !== wanted || (state.view !== null && state.view !== 'timeline')) return
+          } else if (state.stale.has(anyRun)) {
+            // Keep showing the timeline already loaded while the fresh one comes in.
+            state.stale.delete(anyRun)
+            void loadTimeline(anyRun).then(() => { if (state.sel === wanted) void render() })
+          }
+          renderTimeline(anyRun, run)
+        }
+        renderGate(run)
+        renderDrawer(nodes, note ? '' : view === 'graph' ? 'Click a step on the graph to see its agent, last lines and result.' : 'Click a timeline row or an agent to see its result and last lines.')
+        if (run?.error) setMsg(`Run error: ${run.error}`, true)
+        $('footer').innerHTML = session
+          ? `Orca conversation: <code>${esc(session.id)}</code>${session.runIds?.length ? ` · Runs: ${session.runIds.map((id) => `<code>${esc(id)}</code>`).join(', ')}` : ''} · agents linked by their tasks' <code>creator_orca_session_id</code>`
+          : run ? `Orca Run: <code>${esc(run.id)}</code> · revise loops: ${run.loops} · results: <code>${esc(run.runDir)}</code>`
+          : runId ? `Orca Run: <code>${esc(runId)}</code> · started by a coordinating agent, not by a playbook`
+          : nodes.length ? 'Plan preview: press Start to run it.' : ''
+      }
+
+      async function loadOrcaRun(runId) {
+        try {
+          const { nodes } = await orca.plugin.request('orca.run', { runId }, { timeoutMs: 60000 })
+          state.nodes[runId] = nodes
+        } catch (error) {
+          setMsg(`Could not load the Run: ${error.message ?? error}`, true)
+          state.nodes[runId] = []
+        }
+      }
+
+      const timelineLoads = new Set()
+      async function loadTimeline(runId) {
+        if (timelineLoads.has(runId)) return // a load of this Run is still running; do not stack another one
+        timelineLoads.add(runId)
+        try {
+          state.timelines[runId] = await orca.plugin.request('run.timeline', { runId }, { timeoutMs: 90000 })
+          delete state.timelineErrors[runId]
+        } catch (error) {
+          // Not cached: the next refresh tries again, and the panel says it failed instead of showing an empty timeline.
+          state.timelineErrors[runId] = error.message ?? String(error)
+        } finally {
+          timelineLoads.delete(runId)
+        }
+      }
+
+      const ICON = { created: '＋', started: '▶', done: '✓', failed: '✗', report: '✉', question: '?', escalation: '!', message: '✉', gate: '◆', decision: '◆' }
+      const KIND_COLOR = { started: 'var(--running)', done: 'var(--done)', failed: 'var(--failed)', report: 'var(--done)', question: 'var(--ask)', escalation: 'var(--failed)', gate: 'var(--gate)', decision: 'var(--gate)' }
+      function eventText(event) {
+        switch (event.kind) {
+          case 'created': return `Task: ${event.title}`
+          case 'started': return `Start: ${event.title}`
+          case 'done': return `End: ${event.title}`
+          case 'failed': return `Failed: ${event.title}`
+          case 'report': return `Report: ${event.detail ?? event.title}`
+          case 'question': return `Question: ${event.title}`
+          case 'escalation': return `Escalation: ${event.title}`
+          case 'gate': return `Gate: ${event.title}`
+          case 'decision': return `Decision: ${event.detail ?? ''}`
+          default: return event.title
+        }
+      }
+
+      // Top-down timeline, newest at the bottom like a chat: one row per event, lanes on the left show who worked in parallel.
+      function renderTimeline(runId, run) {
+        const box = $('timeline')
+        if (!state.timelines[runId]) {
+          const failed = state.timelineErrors[runId]
+          box.innerHTML = `<div class="${failed ? 'err' : 'muted'} small" style="margin-top:8px">${failed ? `Could not load the timeline: ${esc(failed)}` : 'Loading the timeline…'}</div>`
+          return
+        }
+        const timeline = state.timelines[runId]
+        const events = timeline.events
+        if (!events.length) { box.innerHTML = '<div class="muted small" style="margin-top:8px">Orca has no recorded events for this yet.</div>'; return }
+        const MAX = 8
+        const lanes = Math.min(timeline.lanes, MAX)
+        const spans = {}
+        for (const event of events) if (event.lane !== undefined && event.spanStart !== undefined) spans[event.taskId] = { lane: Math.min(event.lane, MAX - 1), start: event.spanStart, end: event.spanEnd ?? Number.POSITIVE_INFINITY }
+        const activeAt = (at) => Object.values(spans).filter((item) => item.start <= at && at <= item.end)
+        const taskToNode = (taskId) => {
+          if (!run) return taskId
+          const entry = Object.entries(run.tasks).find(([, task]) => task.taskId === taskId)
+          return entry ? entry[0] : null
+        }
+        let html = `<div class="tl-head">${esc(clock(events[0].at))} → ${esc(clock(events[events.length - 1].at))} · at most ${timeline.lanes} working at once · times from Orca's records (task created, worker started, report, closed)</div>`
+        let previous = null
+        const dayOf = (ms) => new Date(ms).toLocaleDateString(LOCALE, { day: '2-digit', month: '2-digit' })
+        const manyDays = dayOf(events[0].at) !== dayOf(events[events.length - 1].at)
+        for (const event of events) {
+          if (manyDays && (!previous || dayOf(previous.at) !== dayOf(event.at))) html += `<div class="tl-gap" style="padding-left:8px;font-style:normal;font-weight:600">${esc(dayOf(event.at))}</div>`
+          if (previous && event.at - previous.at > 120000) {
+            const working = activeAt(previous.at + 1).length
+            html += `<div class="tl-gap">⋯ ${esc(span(event.at - previous.at))}${working ? ` · working: ${working}` : ' · no agent working'}</div>`
+          }
+          const active = activeAt(event.at)
+          let bars = ''
+          for (let lane = 0; lane < lanes; lane += 1) {
+            const own = event.lane !== undefined && Math.min(event.lane, MAX - 1) === lane
+            const busy = active.some((item) => item.lane === lane)
+            const color = own ? (KIND_COLOR[event.kind] ?? 'var(--pending)') : busy ? 'color-mix(in srgb, var(--running) 45%, transparent)' : 'transparent'
+            bars += `<i style="background:${color}"></i>`
+          }
+          const node = event.taskId ? taskToNode(event.taskId) : null
+          const selected = node && state.selected === node
+          const detail = event.kind === 'decision' || event.kind === 'report' ? '' : event.detail
+          html += `<div class="tl-row${selected ? ' sel' : ''}"${node ? ` data-task="${esc(node)}"` : ''}><span class="lanes">${bars}</span>` +
+            `<span class="tl-time">${esc(clock(event.at))}</span><span style="color:${KIND_COLOR[event.kind] ?? 'var(--muted)'}">${ICON[event.kind] ?? '·'}</span>` +
+            `<span>${esc(cut(eventText(event), 90))}${detail ? `<span class="muted small"> · ${esc(cut(detail, 70))}</span>` : ''}</span>` +
+            `<span class="tl-dur">${event.duration !== undefined ? esc(span(event.duration)) : ''}</span></div>`
+          previous = event
+        }
+        const keepBottom = state.followBottom || (box.firstChild && box.firstChild.scrollHeight - box.firstChild.scrollTop - box.firstChild.clientHeight < 40)
+        const scroll = box.firstChild?.scrollTop ?? 0
+        box.innerHTML = `<div class="timeline">${html}</div>`
+        const list = box.firstChild
+        list.scrollTop = keepBottom ? list.scrollHeight : scroll
+        list.onscroll = () => { state.followBottom = list.scrollHeight - list.scrollTop - list.clientHeight < 40 }
+        for (const row of list.querySelectorAll('.tl-row[data-task]')) {
+          row.onclick = () => { state.selected = state.selected === row.dataset.task ? null : row.dataset.task; void render() }
+        }
+      }
+
+      function agentsWord(count) { return count === 1 ? '1 agent' : `${count} agents` }
+
+      /** What a conversation is doing, in the user's words: a finished turn waits for the user, a monitoring one waits for its helpers. */
+      function sessionStatus(session) {
+        if (session.workingMode === 'monitoring' || (session.state === 'working' && session.mainState === 'done')) return ['waiting for its helpers', 'var(--running)']
+        if (session.state === 'working') return ['working', 'var(--running)']
+        if (session.state === 'blocked' || session.state === 'permission') return ['waits for permission', 'var(--ask)']
+        if (session.state === 'waiting') return ['waiting for you', 'var(--gate)']
+        if (session.state === 'done') return [`waiting for you · last reply ${clock(session.mainSince ?? session.since ?? Date.now())}`, 'var(--gate)']
+        return SESSION[session.state] ?? [session.state, 'var(--pending)']
+      }
+
+      const sessionLoads = new Set()
+      async function loadSessionView(session) {
+        const key = `ses:${session.id}`
+        if (sessionLoads.has(key)) return
+        sessionLoads.add(key)
+        try {
+          const view = session.runIds?.length
+            ? await orca.plugin.request('session.view', { sessionId: session.id, runIds: session.runIds }, { timeoutMs: 120000 })
+            : { agents: [], events: [], lanes: 0 }
+          state.sessionViews[key] = view
+          state.timelines[key] = { events: view.events, lanes: view.lanes }
+          delete state.timelineErrors[key]
+        } catch (error) {
+          state.timelineErrors[key] = error.message ?? String(error)
+        } finally {
+          sessionLoads.delete(key)
+        }
+      }
+
+      function agentNode(agent) {
+        let [label, color] = STATUS[agent.status] ?? [agent.status, 'var(--pending)']
+        if (agent.live && LIVE[agent.live.state]) [label, color] = LIVE[agent.live.state]
+        return { id: agent.id, title: agent.title, sub: [agent.agent, agent.model, agent.effort].filter(Boolean).join(' · ') || 'task', label, color, kind: 'agent', attempt: 1, status: agent.status,
+          live: agent.live, since: agent.live?.since, dispatchId: agent.dispatchId, workspacePath: agent.workspacePath, result: agent.result, outcome: agent.outcome,
+          startedAt: agent.startedAt, endedAt: agent.endedAt, runId: agent.runId, needs: [], waitingFor: [] }
+      }
+
+      // A conversation: its state, the helpers and background work Orca sees in it live, and whether its agents loaded.
+      function renderSessionHead(session, view) {
+        const key = `ses:${session.id}`
+        const failed = state.timelineErrors[key]
+        const [label, color] = sessionStatus(session)
+        const live = [...helpers(session).filter((item) => item.state !== 'done').map((item) => ({ kind: 'helper', description: item.title, state: item.state, since: item.since })), ...session.children]
+        let head = `<div class="tree"><div class="srow"><span class="dot" style="background:${color}"></span>` +
+          `<span><b>${esc(cut(session.title, 60))}</b> <span class="muted small">${esc(session.agent ?? '')}</span>${session.tool ? `<div class="muted small">${esc(cut(session.tool + (session.toolInput ? ' · ' + session.toolInput : ''), 110))}</div>` : ''}</span>` +
+          `<span class="small" style="color:${color}">${esc(label)}</span></div>`
+        if (live.length) head += live.map((child) => `<div class="srow indent"><span class="dot" style="background:${child.state === 'working' ? 'var(--running)' : 'var(--pending)'}"></span>` +
+          `<span>${esc(child.kind === 'helper' ? '● helper' : CHILD[child.kind] ?? child.kind)}${child.description ? ` <span class="muted small">· ${esc(cut(child.description, 80))}</span>` : ''}</span>` +
+          `<span class="small muted">${esc(child.state === 'working' ? 'working' : child.state ?? '')}${child.since ? ' · ' + esc(ago(child.since)) : ''}</span></div>`).join('')
+        if (failed && !view) head += `<div class="err small" style="margin-top:6px">Could not load the agents of this conversation: ${esc(failed)}</div>`
+        else if (!view) head += `<div class="muted small" style="margin-top:6px">Loading ${session.agents ? esc(agentsWord(session.agents)) : 'the agents'} of this conversation…</div>`
+        else if (!view.agents.length) head += '<div class="muted small" style="margin-top:6px">This conversation started no agents through Orca orchestration.</div>'
+        head += '</div>'
+        $('sessionView').innerHTML = head
+      }
+
+      /** Agents of any view, working ones first, then newest: model, state, start and how long they worked. */
+      function renderAgents(agents, loading) {
+        if (loading) { $('agentsList').innerHTML = ''; return }
+        if (!agents.length) { $('agentsList').innerHTML = '<div class="muted small" style="margin-top:8px">No agent has worked here yet.</div>'; return }
+        const working = (node) => Number(!!node.live || node.status === 'dispatched')
+        const order = [...agents].sort((a, b) => working(b) - working(a) || (b.startedAt ?? 0) - (a.startedAt ?? 0))
+        const shown = state.showAllAgents ? order : order.slice(0, 12)
+        const rows = shown.map((node) => `<div class="srow${state.selected === node.id ? ' sel' : ''}" data-agent="${esc(node.id)}"><span class="dot" style="background:${node.color}"></span>` +
+          `<span>${esc(cut(node.title, 46))}<div class="muted small">${esc(node.sub)}</div></span>` +
+          `<span class="small" style="color:${node.color}">${esc(node.label)}<div class="muted small">${node.startedAt ? esc(clock(node.startedAt)) : ''}${node.startedAt && node.endedAt ? ' · ' + esc(span(node.endedAt - node.startedAt)) : ''}</div></span></div>`).join('')
+        const more = order.length > shown.length ? `<div class="row"><button id="allAgents" class="small">Show all (${order.length})</button></div>` : ''
+        $('agentsList').innerHTML = `<div class="tree">${rows}${more}</div>`
+        for (const element of $('agentsList').querySelectorAll('.srow[data-agent]')) element.onclick = () => { state.selected = state.selected === element.dataset.agent ? null : element.dataset.agent; void render() }
+        if ($('allAgents')) $('allAgents').onclick = () => { state.showAllAgents = true; void render() }
+      }
+
+      // Top-down graph that fits the narrow right sidebar: one row per depth, steps of a row side by side.
+      function drawGraph(nodes, run) {
+        const svg = $('graph')
+        if (!nodes.length) { svg.setAttribute('width', 10); svg.setAttribute('height', 10); svg.removeAttribute('style'); svg.innerHTML = ''; return }
+        // At most two cards side by side, so many steps of one stage wrap instead of shrinking to unreadable text. Steps of the
+        // same stage (they can run at the same time) sit inside one dashed frame labelled "parallel · N", so a wrapped third
+        // step does not look like a later stage.
+        const W = 172, H = 62, GX = 16, GY = 34, PAD = 8, LOOP = 70, MAX = 2, FRAME = 16
+        const byDepth = {}
+        for (const node of nodes) (byDepth[node.depth] ??= []).push(node)
+        const rows = []
+        const frames = []
+        let y = PAD
+        for (const depth of Object.keys(byDepth).map(Number).sort((a, b) => a - b)) {
+          const group = byDepth[depth]
+          if (group.length > 1) y += FRAME
+          const top = y
+          for (let i = 0; i < group.length; i += MAX) {
+            rows.push({ list: group.slice(i, i + MAX), y })
+            y += H + GY
+          }
+          if (group.length > 1) frames.push({ top: top - FRAME + 2, bottom: y - GY + 6, count: group.length })
+        }
+        const cols = Math.max(...rows.map((row) => row.list.length))
+        const inner = cols * W + (cols - 1) * GX
+        const hasLoop = nodes.some((node) => node.kind === 'gate' && node.loop)
+        const width = PAD * 2 + inner + (hasLoop ? LOOP : 0)
+        const pos = {}
+        for (const row of rows) {
+          const used = row.list.length * W + (row.list.length - 1) * GX
+          row.list.forEach((node, index) => { pos[node.id] = { x: PAD + (inner - used) / 2 + index * (W + GX), y: row.y } })
+        }
+        const height = y - GY + PAD
+        svg.setAttribute('width', width)
+        svg.setAttribute('height', height)
+        svg.setAttribute('viewBox', `0 0 ${width} ${height}`)
+        svg.setAttribute('style', `width:100%;max-width:${width}px;height:auto`)
+        let html = '<defs>' +
+          '<marker id="arrow" viewBox="0 0 10 10" refX="9" refY="5" markerWidth="7" markerHeight="7" orient="auto-start-reverse"><path d="M0,0 L10,5 L0,10 z" fill="var(--muted)"/></marker>' +
+          '<marker id="back" viewBox="0 0 10 10" refX="9" refY="5" markerWidth="7" markerHeight="7" orient="auto-start-reverse"><path d="M0,0 L10,5 L0,10 z" fill="var(--failed)"/></marker></defs>'
+        for (const frame of frames) {
+          html += `<rect x="${PAD - 4}" y="${frame.top}" width="${inner + 8}" height="${frame.bottom - frame.top}" rx="12" fill="none" stroke="var(--line)" stroke-dasharray="4 3"/>` +
+            `<text class="sub" x="${PAD + 4}" y="${frame.top + 11}">parallel · ${frame.count}</text>`
+        }
+        for (const node of nodes) {
+          for (const need of node.needs) {
+            const a = pos[need], b = pos[node.id]
+            if (!a || !b) continue
+            const x1 = a.x + W / 2, y1 = a.y + H, x2 = b.x + W / 2, y2 = b.y - 2, my = (y1 + y2) / 2
+            html += `<path d="M${x1},${y1} C${x1},${my} ${x2},${my} ${x2},${y2}" fill="none" stroke="var(--muted)" stroke-width="1.5" marker-end="url(#arrow)"/>`
+          }
+          if (node.kind === 'gate' && node.loop && pos[node.loop.goto]) {
+            const a = pos[node.id], b = pos[node.loop.goto]
+            const xr = PAD + inner + LOOP - 18, ya = a.y + H / 2, yb = b.y + H / 2
+            html += `<path d="M${a.x + W},${ya} C${xr},${ya} ${xr},${yb} ${b.x + W + 2},${yb}" fill="none" stroke="var(--failed)" stroke-width="1.3" stroke-dasharray="4 3" marker-end="url(#back)"/>` +
+              `<text class="sub" x="${xr - 2}" y="${(ya + yb) / 2 - 2}" text-anchor="end" style="fill:var(--failed)">revise</text>` +
+              `<text class="sub" x="${xr - 2}" y="${(ya + yb) / 2 + 12}" text-anchor="end" style="fill:var(--failed)">${run ? run.loops : 0}/${node.loop.maxLoops}</text>`
+          }
+        }
+        for (const node of nodes) {
+          const { x, y } = pos[node.id]
+          const rx = node.kind === 'gate' ? 20 : node.kind === 'script' ? 3 : 9
+          const dash = node.kind === 'gate' ? ' stroke-dasharray="5 3"' : ''
+          const extra = [node.attempt > 1 ? `attempt ${node.attempt}` : '', node.live ? ago(node.since) : ''].filter(Boolean).join(' · ')
+          const selected = state.selected === node.id
+          html += `<g class="node" data-node="${esc(node.id)}"><rect x="${x}" y="${y}" width="${W}" height="${H}" rx="${rx}" fill="var(--card)" stroke="${node.color}" stroke-width="${selected ? 3.5 : 2}"${dash}/>` +
+            `<rect x="${x}" y="${y + 6}" width="5" height="${H - 12}" rx="2" fill="${node.color}"/>` +
+            `<text x="${x + 13}" y="${y + 20}">${esc(cut(node.title, 23))}</text>` +
+            `<text class="sub" x="${x + 13}" y="${y + 36}">${esc(cut(node.sub, 27))}</text>` +
+            `<text class="sub" x="${x + 13}" y="${y + 52}" style="fill:${node.color}">${esc(cut(node.label + (extra ? ' · ' + extra : ''), 27))}</text></g>`
+        }
+        svg.innerHTML = html
+        for (const group of svg.querySelectorAll('g.node')) {
+          group.onclick = () => { state.selected = state.selected === group.dataset.node ? null : group.dataset.node; void render() }
+        }
+      }
+
+      function renderDrawer(nodes, hint = 'Click a step on the graph to see its agent, last lines and result.') {
+        const box = $('drawer')
+        const node = nodes.find((candidate) => candidate.id === state.selected)
+        if (!node) { box.dataset.html = ''; box.innerHTML = state.sel && nodes.length && hint ? `<div class="muted small" style="margin-top:6px">${esc(hint)}</div>` : ''; return }
+        const key = node.dispatchId ?? ''
+        // Only offer it when it moves something on screen: a live terminal, or a workspace other than the one the user is in.
+        const here = workspace()
+        const canShow = !!(node.live?.terminalId || (node.workspacePath && node.workspacePath !== here?.path) || (node.workspaceId && node.workspaceId !== state.workspaceId))
+        const status = [node.label, node.live ? `for ${ago(node.since)}` : '', node.attempt > 1 ? `attempt ${node.attempt}` : '', node.outcome ? `worker outcome: ${node.outcome}` : ''].filter(Boolean).join(' · ')
+        const stable = [node.label, node.attempt > 1 ? `attempt ${node.attempt}` : '', node.outcome ? `worker outcome: ${node.outcome}` : ''].filter(Boolean).join(' · ')
+        const waiting = node.waitingFor?.length && !node.live && ['pending', 'blocked', 'ready', undefined].includes(node.status) ? `<div class="muted small">waits for: ${esc(node.waitingFor.join(', '))}</div>` : ''
+        const decision = node.decision ? `<div class="small">Decision: ${node.decision === 'ok' ? 'OK' : 'Revise'}${node.comment ? ` — "${esc(node.comment)}"` : ''}</div>` : ''
+        const lines = state.lines[key]
+        const html = `<div class="card drawer"><h3>${esc(node.title)}</h3><div class="muted small">${esc(node.sub)}</div>` +
+          `<div id="drawerStatus" class="small" style="color:${node.color};margin-top:4px">${esc(stable)}</div>${waiting}${decision}` +
+          (node.error ? `<div class="err small">${esc(node.error)}</div>` : '') +
+          `<div class="row">${canShow ? '<button id="showAgent" class="small">Show agent ↗</button>' : ''}${node.dispatchId ? '<button id="lastLines" class="small">Last lines</button>' : ''}</div>` +
+          (lines ? `<pre>${esc(lines.length ? lines.join('\n') : 'No lines in the transcript.')}</pre>` : '') +
+          (node.result ? `<details${state.openOutputs.has(node.id) ? ' open' : ''} id="resultBox"><summary>Step result</summary><pre>${esc(node.result)}</pre></details>` : '') + '</div>'
+        // Rewriting the same drawer every 5 s would reset its scroll and text selection; only the elapsed time changes in place.
+        if (box.dataset.html === html) { if ($('drawerStatus')) $('drawerStatus').textContent = status; return }
+        box.dataset.html = html
+        box.innerHTML = html
+        $('drawerStatus').textContent = status
+        if ($('resultBox')) $('resultBox').ontoggle = () => { $('resultBox').open ? state.openOutputs.add(node.id) : state.openOutputs.delete(node.id) }
+        if ($('showAgent')) $('showAgent').onclick = async () => {
+          const input = {}
+          if (node.live?.terminalId) input.terminalId = node.live.terminalId
+          if (node.workspacePath) input.workspacePath = node.workspacePath
+          if (node.workspaceId) input.workspaceId = node.workspaceId
+          try {
+            const { shown } = await orca.plugin.request('agent.show', input)
+            setMsg(shown === 'terminal' ? 'Showing the agent terminal.' : shown === 'workspace' ? 'The agent has no terminal to show; opened its workspace.' : 'Found neither the agent nor its workspace.', shown === 'none')
+          } catch (error) { setMsg(error.message ?? String(error), true) }
+        }
+        if ($('lastLines')) $('lastLines').onclick = async () => {
+          $('lastLines').disabled = true
+          try {
+            const { lines: read } = await orca.plugin.request('step.lines', { dispatchId: node.dispatchId }, { timeoutMs: 90000 })
+            state.lines[key] = read
+            void render()
+          } catch (error) { setMsg(error.message ?? String(error), true); $('lastLines').disabled = false }
+        }
+      }
+
+      function renderGate(run) {
+        const box = $('gate')
+        const open = run && run.steps.find((step) => step.kind === 'gate' && run.tasks[step.id]?.gateId && !run.tasks[step.id]?.decision)
+        if (!open) { box.innerHTML = ''; box.dataset.key = ''; return }
+        const task = run.tasks[open.id]
+        const key = `${run.id}:${task.taskId}:${task.gateId}`
+        if (box.dataset.key === key) return
+        box.dataset.key = key
+        const inputs = open.needs.map((need) => {
+          const step = run.steps.find((candidate) => candidate.id === need)
+          const output = run.tasks[need]?.output
+          return output ? `<details open><summary>${esc(step?.title ?? need)}</summary><pre>${esc(output)}</pre></details>` : ''
+        }).join('')
+        const loops = open.loop ? `Revise sends the run back to step "${esc(open.loop.goto)}" (${open.loop.maxLoops - run.loops} of ${open.loop.maxLoops} left).` : 'Revise stops the run.'
+        const warning = task.error ? `<div class="err small" style="margin-top:6px">${esc(task.error)}</div>` : ''
+        box.innerHTML = `<div class="card gate"><h2>${esc(open.title)}</h2><div>${esc(open.question)}</div>${warning}${inputs}` +
+          `<label for="comment">Comment (required for Revise)</label><textarea id="comment" placeholder="For example: take the current time into account"></textarea>` +
+          `<div class="row"><button id="gateOk" class="ok">OK</button><button id="gateRevise" class="danger">Revise</button></div>` +
+          `<div class="muted small" style="margin-top:6px">${loops}</div></div>`
+        $('gateOk').onclick = () => resolve(run.id, open.id, 'ok')
+        $('gateRevise').onclick = () => resolve(run.id, open.id, 'revise')
+      }
+
+      async function resolve(runId, stepId, choice) {
+        const comment = $('comment')?.value ?? ''
+        if (choice === 'revise' && !comment.trim()) { setMsg('Add a comment to Revise.', true); return }
+        for (const button of $('gate').querySelectorAll('button')) button.disabled = true
+        try {
+          setMsg('Sending the decision…')
+          await orca.plugin.request('gate.resolve', { runId, stepId, choice, comment }, { timeoutMs: 120000 })
+          setMsg(choice === 'ok' ? 'Approved.' : 'Sent back with the comment.')
+          await load()
+        } catch (error) {
+          for (const button of $('gate').querySelectorAll('button')) button.disabled = false
+          setMsg(`Failed: ${error.message ?? error}`, true)
+        }
+      }
+
+      $('workspace').onchange = (event) => { state.pinned = event.target.value; state.sel = null; void load() }
+      $('playbook').onchange = () => { $('start').disabled = !state.playbooks.some((p) => p.file === $('playbook').value && !p.errors.length); setMsg(''); void render() }
+      $('run').onchange = (event) => { state.sel = event.target.value || null; state.selected = null; state.view = null; state.selectedSession = null; state.followBottom = true; state.showAllAgents = false; void render() }
+      $('refresh').onclick = () => { state.nodes = {}; state.lines = {}; state.timelines = {}; state.timelineErrors = {}; state.sessionViews = {}; void load() }
+      $('start').onclick = async () => {
+        const file = $('playbook').value
+        if (!file || !state.workspaceId) return
+        state.busy = true
+        $('start').disabled = true
+        setMsg('Creating the run and its tasks in Orca…')
+        try {
+          const { run } = await orca.plugin.request('run.start', { workspaceId: state.workspaceId, file }, { timeoutMs: 120000 })
+          state.sel = `pb:${run.id}`
+          state.selected = null
+          state.view = null
+          setMsg(`Started run ${run.id}.`)
+          await load()
+        } catch (error) {
+          setMsg(`Start failed: ${error.message ?? error}`, true)
+        } finally {
+          state.busy = false
+          $('start').disabled = !state.playbooks.some((p) => p.file === $('playbook').value && !p.errors.length)
+        }
+      }
+      let pendingAgent = 0
+      orca.plugin.on('runs.changed', () => { void load() })
+      // Also fires when terminals of the same workspace open or close; load() resets the selection only on a real change.
+      orca.on('workspace.changed', () => { if (!state.pinned) void load() })
+      orca.on('agent.status.changed', () => {
+        clearTimeout(pendingAgent)
+        pendingAgent = setTimeout(() => { const runId = orcaRunId(); if (runId) { delete state.nodes[runId]; state.stale.add(runId) } void load() }, 800)
+      })
+      setInterval(() => {
+        if (state.busy) return
+        const runId = orcaRunId()
+        if (runId && state.orcaRuns.find((r) => r.id === runId)?.active) { delete state.nodes[runId]; state.stale.add(runId) }
+        const run = playbookRun()
+        if (run && (run.status === 'running' || run.status === 'waiting')) state.stale.add(run.id)
+        const session = selectedSession()
+        if (session && Date.now() - (state.sessionRefreshedAt ?? 0) > 10000 && (session.state !== 'done' || (state.sessionViews[`ses:${session.id}`]?.agents ?? []).some((agent) => agent.status === 'dispatched'))) {
+          state.sessionRefreshedAt = Date.now()
+          state.stale.add(`ses:${session.id}`)
+        }
+        void load()
+      }, 5000)
+      void load()
+    </script>
+  </body>
+</html>

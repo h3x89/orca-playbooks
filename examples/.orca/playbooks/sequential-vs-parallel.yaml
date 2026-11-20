@@ -1,0 +1,32 @@
+# Example playbook: steps without `needs` start together; a step with `needs` waits for those steps.
+# Script steps only (no agent, no cost): each one waits a few seconds. Watch the Graph and the Timeline.
+title: Sequential vs parallel
+description: Two steps run side by side, then two run one after the other, then you approve.
+
+inputs:
+  seconds: { default: "5", description: How long each step waits }
+
+steps:
+  - id: left
+    title: Parallel A
+    script: { run: pause.sh, timeout_sec: 60 }
+
+  - id: right
+    title: Parallel B
+    script: { run: pause.sh, timeout_sec: 60 }
+
+  - id: first
+    title: Sequential 1
+    needs: [left, right]
+    script: { run: pause.sh, timeout_sec: 60 }
+
+  - id: second
+    title: Sequential 2
+    needs: [first]
+    script: { run: pause.sh, timeout_sec: 60 }
+
+  - id: done
+    title: Looks right?
+    needs: [second]
+    gate:
+      question: Did Parallel A and B overlap on the Timeline, and did Sequential 1 and 2 run one after the other?

@@ -1,0 +1,12 @@
+Playbooks for Orca includes or builds on:
+
+1. yaml 2.9.1 (vendor/yaml/) — Copyright Eemeli Aro, ISC license (vendor/yaml/LICENSE).
+   Source and checksum: vendor/yaml/SOURCE.txt.
+
+2. Agent Pipeline / orca-pipeline (https://github.com/Alexander-64/orca-pipeline) —
+   Copyright (c) 2026 Alexander-64, MIT license. No code is copied; src/worker.ts follows the
+   same pattern: the plugin worker calls `orca orchestration` through execFile with `--json`,
+   and a terminal from `terminal.create` acts as the coordinator (`--from`).
+
+3. The example scripts in examples/ were written by the author of this plugin. Weather and air
+   quality data: Open-Meteo (https://open-meteo.com), CC BY 4.0.

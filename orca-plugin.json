@@ -1,0 +1,40 @@
+{
+  "manifestVersion": 2,
+  "id": "playbooks",
+  "name": "Playbooks",
+  "version": "0.5.0",
+  "description": "Workflows of agents and human decision gates kept as YAML in the repository, run through Orca orchestration and drawn as a live graph.",
+  "license": "MIT",
+  "engines": {
+    "orca": ">=1.4.263"
+  },
+  "execution": "trusted-worker",
+  "pluginApi": 1,
+  "main": "src/worker.ts",
+  "contributes": {
+    "panels": [
+      {
+        "id": "playbooks",
+        "title": "Playbooks",
+        "icon": "blocks",
+        "entry": "panel/index.html",
+        "ui": "html"
+      }
+    ],
+    "statusBarItems": [
+      {
+        "id": "runs",
+        "text": "Playbooks",
+        "icon": "blocks"
+      }
+    ]
+  },
+  "capabilities": [
+    { "kind": "storage:own" },
+    { "kind": "workspace:read" },
+    { "kind": "workspace:write" },
+    { "kind": "agent:read" },
+    { "kind": "terminal:send" },
+    { "kind": "notifications:show" }
+  ]
+}

@@ -1,0 +1,40 @@
+# Example playbook: two scripts fetch data from Open-Meteo (no API key) in parallel, an agent writes
+# a plan from it, and you approve the plan or send it back with a comment (then the plan is written again).
+title: Weather and air
+description: Two scripts fetch the forecast and air quality from Open-Meteo, an agent plans your day, and you approve it or send it back with a comment.
+
+inputs:
+  activity: { default: running, description: What to find a time window for (running, cycling...) }
+  lat: { default: "52.23", description: Latitude (Warsaw) }
+  lon: { default: "21.01", description: Longitude (Warsaw) }
+
+steps:
+  - id: weather
+    title: Weather forecast
+    script: { run: weather.py, timeout_sec: 120 }
+
+  - id: air
+    title: Air quality
+    script: { run: air.py, timeout_sec: 120 }
+
+  - id: plan
+    title: Plan for today
+    needs: [weather, air]
+    agent: claude
+    # model: claude-sonnet-5-5   # optional; without it the agent's default model is used
+    keep_open: true   # the agent's terminal stays open after the work, so you can see what it did
+    prompt: |
+      You advise on outdoor activities. Today is {{date}}, the time is {{now}}.
+      Activity: {{inputs.activity}}.
+      Read the hourly forecast in {{run_dir}}/weather.txt and the air quality in {{run_dir}}/air.txt.
+      Write a recommendation in 3-5 sentences: the best time window for this activity, with hours and numbers
+      (temperature, precipitation, wind, EAQI). Only recommend hours that are still ahead.
+      Do not fetch anything from the network: everything is in these two files.
+
+  - id: decision
+    title: Your decision
+    needs: [plan]
+    gate:
+      question: The plan for today is ready. Approve it or send it back with a comment.
+    on:
+      revise: { goto: plan, max_loops: 2 }
