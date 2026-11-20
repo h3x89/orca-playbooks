@@ -38,7 +38,8 @@
       .err { color: var(--failed); }
       .badge { font-size: 11px; padding: 2px 8px; border-radius: 10px; border: 1px solid currentColor; font-weight: 500; }
       .card { border: 1px solid var(--line); border-radius: 8px; padding: 10px; margin-top: 10px; background: var(--card); }
-      .where { display: flex; align-items: center; gap: 8px; justify-content: space-between; padding: 6px 8px; border-radius: 8px; background: var(--card); border: 1px solid var(--line); }
+      .where { display: flex; align-items: center; gap: 8px; justify-content: space-between; flex-wrap: wrap; padding: 6px 8px; border-radius: 8px; background: var(--card); border: 1px solid var(--line); }
+      .where > span { min-width: 0; overflow-wrap: anywhere; }
       .where b { font-weight: 600; }
       .banner { margin-top: 8px; padding: 6px 8px; border-radius: 8px; border: 1px solid var(--gate); color: var(--gate); display: flex; justify-content: space-between; align-items: center; gap: 8px; }
       .gate { border-color: var(--gate); border-width: 2px; }
@@ -51,20 +52,30 @@
       .muted { color: var(--muted); }
       .small { font-size: 11px; }
       .drawer h3 { margin: 0 0 4px; font-size: 13px; }
-      .tabs { display: flex; gap: 6px; margin-top: 10px; }
-      .tabs button { padding: 3px 10px; font-size: 12px; }
+      .tabs { display: flex; gap: 4px; margin-top: 10px; flex-wrap: wrap; }
+      .tabs button { padding: 3px 7px; font-size: 12px; }
       .tabs button.on { border-color: var(--fg); font-weight: 600; }
-      .timeline { margin-top: 8px; max-height: 520px; overflow: auto; border: 1px solid var(--line); border-radius: 8px; }
+      .timeline { margin-top: 8px; max-height: 520px; overflow: auto; border: 1px solid var(--line); border-radius: 8px; container-type: inline-size; }
       .tl-head { padding: 6px 8px; color: var(--muted); font-size: 11px; border-bottom: 1px solid var(--line); position: sticky; top: 0; background: var(--bg); }
-      .tl-row { display: grid; grid-template-columns: auto 38px 16px 1fr auto; gap: 6px; align-items: start; padding: 3px 8px; font-size: 12px; cursor: default; }
+      /* Narrow panels: the text column may shrink (minmax 0) and wraps to at most two lines; the full text is in its tooltip. */
+      .tl-row { display: grid; grid-template-columns: auto 34px 14px minmax(0, 1fr) auto; gap: 5px; align-items: start; padding: 3px 8px; font-size: 12px; cursor: default; }
+      .tl-text { min-width: 0; overflow-wrap: anywhere; display: -webkit-box; -webkit-box-orient: vertical; -webkit-line-clamp: 2; line-clamp: 2; overflow: hidden; }
       .tl-row[data-task] { cursor: pointer; }
       .tl-row.sel { background: var(--card); }
       .tl-gap { padding: 2px 8px 2px 60px; color: var(--muted); font-size: 11px; font-style: italic; }
       .lanes { display: inline-flex; gap: 2px; height: 16px; }
       .lanes i { display: inline-block; width: 4px; height: 16px; border-radius: 2px; }
-      .tl-time, .tl-dur { color: var(--muted); font-variant-numeric: tabular-nums; }
+      .tl-time, .tl-dur { color: var(--muted); font-variant-numeric: tabular-nums; white-space: nowrap; }
+      .tl-dur { font-size: 11px; }
+      /* In a narrow panel the duration goes under the text, so the text keeps the width. */
+      @container (max-width: 360px) {
+        .tl-row { grid-template-columns: auto 34px 14px minmax(0, 1fr); }
+        .tl-dur { grid-column: 4; }
+        .tl-dur:empty { display: none; }
+      }
       .tree { margin-top: 10px; }
-      .srow { display: grid; grid-template-columns: 14px 1fr auto; gap: 6px; padding: 5px 6px; border-radius: 6px; cursor: pointer; }
+      .srow { display: grid; grid-template-columns: 14px minmax(0, 1fr) auto; gap: 6px; padding: 5px 6px; border-radius: 6px; cursor: pointer; }
+      .srow > span { min-width: 0; overflow-wrap: anywhere; }
       .srow:hover, .srow.sel { background: var(--card); }
       .srow .dot { width: 9px; height: 9px; border-radius: 50%; margin-top: 4px; }
       .indent { margin-left: 16px; border-left: 1px solid var(--line); padding-left: 6px; }
@@ -92,6 +103,7 @@
 
     <label for="run">Run or conversation</label>
     <select id="run"></select>
+    <div id="indexNote" class="muted small" style="margin-top:4px"></div>
     <div id="gate"></div>
     <div id="sessionView"></div>
     <div id="tabs" class="tabs"></div>
@@ -108,7 +120,7 @@
       <span><i style="background:var(--done)"></i>done</span>
       <span><i style="background:var(--failed)"></i>failed / sent back</span>
     </div>
-    <div id="footer" class="muted small" style="margin-top:8px"></div>
+    <div id="footer" class="muted small" style="margin-top:8px; overflow-wrap:anywhere"></div>
 
     <script>
       const $ = (id) => document.getElementById(id)
@@ -154,9 +166,9 @@
         const seconds = Math.max(0, Math.round((Date.now() - since) / 1000))
         return seconds < 60 ? `${seconds} s` : seconds < 3600 ? `${Math.floor(seconds / 60)}:${String(seconds % 60).padStart(2, '0')}` : `${Math.floor(seconds / 3600)} h ${Math.floor((seconds % 3600) / 60)} min`
       }
-      // Dates and times follow Orca's locale; the words are English.
+      // Dates follow Orca's locale and the words are English; times always use the 24-hour clock (short, one width in a narrow panel).
       const LOCALE = orca.locale || undefined
-      function time(ms) { return new Date(ms).toLocaleString(LOCALE, { day: '2-digit', month: '2-digit', hour: '2-digit', minute: '2-digit' }) }
+      function time(ms) { return new Date(ms).toLocaleString(LOCALE, { day: '2-digit', month: '2-digit', hour: '2-digit', minute: '2-digit', hourCycle: 'h23' }) }
 
       let loads = 0
       async function load() {
@@ -165,9 +177,15 @@
           // Orca accepts only plain JSON: leave the key out instead of sending undefined.
           const answer = await orca.plugin.request('state.get', state.pinned ? { workspaceId: state.pinned } : {}, { timeoutMs: 60000 })
           if (mine !== loads) return // a newer load started meanwhile; its answer wins
-          if (answer.workspaceId !== state.workspaceId) { state.sel = null; state.selected = null }
+          if (answer.workspaceId !== state.workspaceId) { state.sel = null; state.selected = null; state.picked = false }
+          // The first answer after a start can come before Orca's Runs were read: choose again once they are, unless the person chose.
+          if (state.indexing && !answer.indexing) {
+            if (!state.picked) state.sel = null
+            // A conversation read before the Runs were all known may miss agents: read it again.
+            for (const key of Object.keys(state.sessionViews)) { delete state.sessionViews[key]; delete state.timelines[key] }
+          }
           Object.assign(state, {
-            workspaceId: answer.workspaceId, following: answer.following, workspaces: answer.workspaces, playbooks: answer.playbooks,
+            workspaceId: answer.workspaceId, following: answer.following, indexing: answer.indexing, workspaces: answer.workspaces, playbooks: answer.playbooks,
             runs: answer.runs, orcaRuns: answer.orcaRuns, sessions: answer.sessions ?? [], waitingElsewhere: answer.waitingElsewhere
           })
           renderControls()
@@ -219,6 +237,7 @@
           state.view = null
         }
         $('run').replaceChildren(...(choices.length ? choices.map((c) => option(c.key, c.label, c.key === state.sel)) : [option('', 'No runs or conversations in this workspace', true)]))
+        $('indexNote').textContent = state.indexing ? "Reading Orca's records of agents and Runs; conversations show their agents in a few seconds." : ''
         $('start').disabled = state.busy || !state.playbooks.some((p) => p.file === pb.value && !p.errors.length)
       }
 
@@ -234,7 +253,7 @@
       const CHILD = { command: '⚙ background command', agent: '🤖 subagent', workflow: '↻ workflow', monitor: '◎ monitor' }
       function helpers(session) { return state.sessions.filter((other) => other.parentPaneKey && other.parentPaneKey === session.paneKey) }
       function selectedSession() { return state.sel?.startsWith('ses:') ? state.sessions.find((session) => `ses:${session.id}` === state.sel) ?? null : null }
-      function clock(ms) { return new Date(ms).toLocaleTimeString(LOCALE, { hour: '2-digit', minute: '2-digit' }) }
+      function clock(ms) { return new Date(ms).toLocaleTimeString(LOCALE, { hour: '2-digit', minute: '2-digit', hourCycle: 'h23' }) }
       function span(ms) {
         if (ms === undefined || ms === null) return ''
         const seconds = Math.round(ms / 1000)
@@ -304,7 +323,7 @@
         const wanted = state.sel
         const key = session ? `ses:${session.id}` : null
         if (session) {
-          if (!state.sessionViews[key]) await loadSessionView(session)
+          if (!state.sessionViews[key]) startSessionLoad(session)
           else if (state.stale.has(key)) {
             state.stale.delete(key)
             void loadSessionView(session).then(() => { if (state.sel === key) void render() })
@@ -421,7 +440,7 @@
           const entry = Object.entries(run.tasks).find(([, task]) => task.taskId === taskId)
           return entry ? entry[0] : null
         }
-        let html = `<div class="tl-head">${esc(clock(events[0].at))} → ${esc(clock(events[events.length - 1].at))} · at most ${timeline.lanes} working at once · times from Orca's records (task created, worker started, report, closed)</div>`
+        let html = `<div class="tl-head" title="Times from Orca's records: task created, worker started, report, closed.">${esc(clock(events[0].at))} → ${esc(clock(events[events.length - 1].at))} · at most ${timeline.lanes} working at once</div>`
         let previous = null
         const dayOf = (ms) => new Date(ms).toLocaleDateString(LOCALE, { day: '2-digit', month: '2-digit' })
         const manyDays = dayOf(events[0].at) !== dayOf(events[events.length - 1].at)
@@ -444,7 +463,7 @@
           const detail = event.kind === 'decision' || event.kind === 'report' ? '' : event.detail
           html += `<div class="tl-row${selected ? ' sel' : ''}"${node ? ` data-task="${esc(node)}"` : ''}><span class="lanes">${bars}</span>` +
             `<span class="tl-time">${esc(clock(event.at))}</span><span style="color:${KIND_COLOR[event.kind] ?? 'var(--muted)'}">${ICON[event.kind] ?? '·'}</span>` +
-            `<span>${esc(cut(eventText(event), 90))}${detail ? `<span class="muted small"> · ${esc(cut(detail, 70))}</span>` : ''}</span>` +
+            `<span class="tl-text" title="${esc(eventText(event) + (detail ? ` · ${detail}` : ''))}">${esc(cut(eventText(event), 200))}${detail ? `<span class="muted small"> · ${esc(cut(detail, 120))}</span>` : ''}</span>` +
             `<span class="tl-dur">${event.duration !== undefined ? esc(span(event.duration)) : ''}</span></div>`
           previous = event
         }
@@ -472,6 +491,16 @@
       }
 
       const sessionLoads = new Set()
+      const sessionFailedAt = {}
+      /**
+       * Starts loading a conversation's agents without waiting: render() shows "Loading…" meanwhile and draws again when
+       * the load ends. One load per conversation at a time; after a failure the next try waits 10 s (no tight retry loop).
+       */
+      function startSessionLoad(session) {
+        const key = `ses:${session.id}`
+        if (sessionLoads.has(key) || Date.now() - (sessionFailedAt[key] ?? 0) < 10000) return
+        void loadSessionView(session).then(() => { if (state.sel === key) void render() })
+      }
       async function loadSessionView(session) {
         const key = `ses:${session.id}`
         if (sessionLoads.has(key)) return
@@ -485,6 +514,7 @@
           delete state.timelineErrors[key]
         } catch (error) {
           state.timelineErrors[key] = error.message ?? String(error)
+          sessionFailedAt[key] = Date.now()
         } finally {
           sessionLoads.delete(key)
         }
@@ -695,7 +725,7 @@
 
       $('workspace').onchange = (event) => { state.pinned = event.target.value; state.sel = null; void load() }
       $('playbook').onchange = () => { $('start').disabled = !state.playbooks.some((p) => p.file === $('playbook').value && !p.errors.length); setMsg(''); void render() }
-      $('run').onchange = (event) => { state.sel = event.target.value || null; state.selected = null; state.view = null; state.selectedSession = null; state.followBottom = true; state.showAllAgents = false; void render() }
+      $('run').onchange = (event) => { state.picked = true; state.sel = event.target.value || null; state.selected = null; state.view = null; state.selectedSession = null; state.followBottom = true; state.showAllAgents = false; void render() }
       $('refresh').onclick = () => { state.nodes = {}; state.lines = {}; state.timelines = {}; state.timelineErrors = {}; state.sessionViews = {}; void load() }
       $('start').onclick = async () => {
         const file = $('playbook').value
@@ -719,6 +749,7 @@
       }
       let pendingAgent = 0
       orca.plugin.on('runs.changed', () => { void load() })
+      orca.plugin.on('index.ready', () => { void load() })
       // Also fires when terminals of the same workspace open or close; load() resets the selection only on a real change.
       orca.on('workspace.changed', () => { if (!state.pinned) void load() })
       orca.on('agent.status.changed', () => {
@@ -738,6 +769,10 @@
         }
         void load()
       }, 5000)
+      // Shown until the first answer arrives, so the panel is never blank while the worker starts.
+      $('where').innerHTML = '<span class="muted">Loading…</span>'
+      $('run').replaceChildren(option('', 'Loading…', true))
+      $('start').disabled = true
       void load()
     </script>
   </body>
