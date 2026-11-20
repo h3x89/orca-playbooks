@@ -171,6 +171,8 @@ declare module 'orca' {
         workspaceId: string | null
         /** True when the workspace is the one in focus, false when picked by hand or guessed. */
         following: boolean
+        /** True while the first read of Orca Runs after a start is still running: conversations have no agents yet. */
+        indexing: boolean
         playbooks: PlaybookInfo[]
         runs: RunInfo[]
         orcaRuns: OrcaRunSummary[]
@@ -198,5 +200,7 @@ declare module 'orca' {
   interface PluginPanelEvents {
     /** Posted after any run changes. */
     'runs.changed': { runs: RunInfo[] }
+    /** Posted once the first read of Orca Runs after a start has finished (see `indexing` in `state.get`). */
+    'index.ready': Record<string, never>
   }
 }

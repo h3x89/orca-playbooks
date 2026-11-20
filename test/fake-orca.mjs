@@ -7,6 +7,10 @@ const statePath = process.env.FAKE_ORCA_STATE
 const logPath = process.env.FAKE_ORCA_LOG
 const args = process.argv.slice(2).filter((arg) => arg !== '--json' && arg !== '--full')
 appendFileSync(logPath, JSON.stringify(args) + '\n')
+// Lets a test make the first read of Orca Runs slow (outside the state lock, like a slow real CLI).
+if (args[0] === 'orchestration' && args[1] === 'run-list' && Number(process.env.FAKE_ORCA_SLOW_RUN_LIST_MS) > 0) {
+  Atomics.wait(new Int32Array(new SharedArrayBuffer(4)), 0, 0, Number(process.env.FAKE_ORCA_SLOW_RUN_LIST_MS))
+}
 
 // The worker runs several CLI calls at once: serialise read-modify-write of the state file with a lock file.
 const lockPath = `${statePath}.lock`
