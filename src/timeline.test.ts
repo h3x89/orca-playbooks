@@ -41,6 +41,24 @@ test('a Run becomes events in time order, with durations, reports, gates and lan
   assert.equal(laneOf('Plan'), laneOf('Review B'))
 })
 
+test("Orca's 'stopped without reporting' escalation is dropped when the worker reports later, kept otherwise", () => {
+  const { events } = buildTimeline(
+    [
+      { id: 'a', status: 'completed', display_name: 'Reported later', created_at: '2026-11-18 20:00:00', completed_at: '2026-11-18T20:05:00Z', dispatch_id: 'da' },
+      { id: 'b', status: 'failed', display_name: 'Never reported', created_at: '2026-11-18 20:00:00', completed_at: '2026-11-18T20:06:00Z', dispatch_id: 'db' }
+    ],
+    [],
+    [
+      { type: 'escalation', subject: 'Worker stopped without reporting', created_at: '2026-11-18T20:00:10Z', payload: { taskId: 'a' } },
+      { type: 'escalation', subject: 'Worker stopped without reporting', created_at: '2026-11-18T20:00:10Z', payload: { taskId: 'b' } },
+      { type: 'escalation', subject: 'Blocked: no access to the repository', created_at: '2026-11-18T20:01:00Z', payload: { taskId: 'a' } }
+    ],
+    { da: { dispatchedAt: Date.parse('2026-11-18T20:00:01Z') }, db: { dispatchedAt: Date.parse('2026-11-18T20:00:01Z') } }
+  )
+  const escalations = events.filter((event) => event.kind === 'escalation').map((event) => `${event.title}: ${event.detail}`)
+  assert.deepEqual(escalations, ['Never reported: Worker stopped without reporting', 'Reported later: Blocked: no access to the repository'])
+})
+
 test('sessions come from a worktree ps row: helpers by parent, children by kind, no crash on missing fields', () => {
   const sessions = sessionsOf({
     agents: [

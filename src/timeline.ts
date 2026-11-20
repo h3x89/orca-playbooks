@@ -98,12 +98,21 @@ export function buildTimeline(tasks: CliTask[], gates: CliGate[], messages: CliM
 }
 
 const NEAR = 3000
+/** Orca's own escalation when it loses sight of a worker; false when the worker reports later. */
+const STOPPED_WITHOUT_REPORT = /stopped without reporting/i
 
-/** One row where Orca records two things at once: a start right after creation, a report right at the end. */
+/**
+ * One row where Orca records two things at once: a start right after creation, a report right at the end.
+ * Drops Orca's "stopped without reporting" escalation for a task that did report or finish after it.
+ */
 function merged(events: TimelineEvent[]): TimelineEvent[] {
   const drop = new Set<TimelineEvent>()
   for (const event of events) {
     if (!event.taskId) continue
+    if (event.kind === 'escalation' && STOPPED_WITHOUT_REPORT.test(event.detail ?? '')) {
+      const later = events.some((other) => other.taskId === event.taskId && other.at >= event.at && (other.kind === 'report' || other.kind === 'done'))
+      if (later) drop.add(event)
+    }
     if (event.kind === 'created') {
       const start = events.find((other) => other.kind === 'started' && other.taskId === event.taskId && Math.abs(other.at - event.at) <= NEAR)
       if (start) {
