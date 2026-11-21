@@ -41,6 +41,30 @@ test('a Run becomes events in time order, with durations, reports, gates and lan
   assert.equal(laneOf('Plan'), laneOf('Review B'))
 })
 
+test("Orca's 'stopped without reporting' escalation is dropped only when the same worker reported after it", () => {
+  const task = (id: string, status: string) => ({ id, status, display_name: id, created_at: '2026-11-18 20:00:00', completed_at: '2026-11-18T20:05:00Z', dispatch_id: `d_${id}` })
+  const stopped = (taskId: string, dispatchId: string, at: string) => ({ type: 'escalation', subject: 'Worker stopped without reporting', created_at: at, payload: { taskId, dispatchId } })
+  const report = (taskId: string, dispatchId: string, at: string) => ({ type: 'worker_done', subject: 'done', created_at: at, payload: JSON.stringify({ taskId, dispatchId }) })
+  const { events } = buildTimeline(
+    [task('reported', 'completed'), task('never', 'failed'), task('other', 'completed'), task('closed', 'completed'), task('before', 'completed'), task('real', 'completed')],
+    [],
+    [
+      stopped('reported', 'd1', '2026-11-18T20:00:10Z'), report('reported', 'd1', '2026-11-18T20:04:59Z'),
+      stopped('never', 'd2', '2026-11-18T20:00:10Z'),
+      stopped('other', 'd3', '2026-11-18T20:00:10Z'), report('other', 'd3b', '2026-11-18T20:04:59Z'),
+      stopped('closed', 'd4', '2026-11-18T20:00:10Z'),
+      report('before', 'd5', '2026-11-18T20:00:05Z'), stopped('before', 'd5', '2026-11-18T20:00:10Z'),
+      { type: 'escalation', subject: 'Blocked: no access to the repository', created_at: '2026-11-18T20:01:00Z', payload: { taskId: 'real', dispatchId: 'd6' } },
+      report('real', 'd6', '2026-11-18T20:04:59Z')
+    ],
+    {}
+  )
+  const kept = events.filter((event) => event.kind === 'escalation').map((event) => event.title).sort()
+  // dropped: 'reported' (same dispatch reported later); kept: no report, a report from another dispatch,
+  // closed without a report, a report before the escalation, and any other escalation.
+  assert.deepEqual(kept, ['before', 'closed', 'never', 'other', 'real'])
+})
+
 test('sessions come from a worktree ps row: helpers by parent, children by kind, no crash on missing fields', () => {
   const sessions = sessionsOf({
     agents: [

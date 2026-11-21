@@ -56,7 +56,9 @@ function setup() {
     FAKE_ORCA_LOG: path.join(dir, 'calls.log'),
     PLAYBOOKS_POLL_MS: '100',
     PLAYBOOKS_INDEX_MS: '200',
-    FAKE_ORCA_FAIL_WORKER: ''
+    FAKE_ORCA_FAIL_WORKER: '',
+    FAKE_ORCA_SLOW_RUN_LIST_MS: '',
+    FAKE_ORCA_FAIL_RUN_LIST: ''
   })
   const other = path.join(dir, 'other')
   mkdirSync(other)
@@ -99,6 +101,16 @@ async function until(read: () => Promise<RunInfo>, done: (run: RunInfo) => boole
     await new Promise((resolve) => setTimeout(resolve, 100))
   }
   return assert.fail(`timed out; last state: ${JSON.stringify(await read())}`)
+}
+
+/** state.get once the first read of Orca Runs is done (on a busy machine it can outlast the first answer). */
+async function settled<T extends { indexing: boolean }>(read: () => Promise<T>): Promise<T> {
+  let answer = await read()
+  for (let i = 0; i < 100 && answer.indexing; i += 1) {
+    await new Promise((resolve) => setTimeout(resolve, 100))
+    answer = await read()
+  }
+  return answer
 }
 
 test('{{now}} and {{date}} are in the system time zone', () => {
@@ -200,7 +212,7 @@ test('follows the focused workspace and shows the other Orca Runs that worked th
   world.agents = [{ terminalId: 'term_rev', title: 'reviewer', agent: 'claude', state: 'blocked', stateStartedAt: 1, task: { title: 'Review X' } }]
   const mounted = await mountWorker(worker, { host })
 
-  const here = await mounted.request('state.get', {})
+  const here = await settled(() => mounted.request('state.get', {}))
   assertPlainJson(here)
   assert.equal(here.following, true)
   assert.equal(here.workspaceId, 'repo1::' + workspace)
@@ -262,6 +274,35 @@ test('follows the focused workspace and shows the other Orca Runs that worked th
   assert.equal(unknown.following, false)
   assert.equal(unknown.workspaceId, 'repo1::' + workspace, 'falls back to the first workspace with playbooks')
   assert.deepEqual(mounted.refusals, [])
+})
+
+test('the first state.get does not wait for a slow first read of Orca Runs; index.ready follows once', async () => {
+  const { host } = setup()
+  process.env.FAKE_ORCA_SLOW_RUN_LIST_MS = '2500'
+  const mounted = await mountWorker(worker, { host })
+  const first = await mounted.request('state.get', {})
+  assertPlainJson(first)
+  assert.equal(first.indexing, true, 'answered while run-list was still sleeping')
+  const later = await settled(() => mounted.request('state.get', {}))
+  assert.equal(later.indexing, false)
+  // A second read of the index (older than 200 ms here, started by state.get) ends without posting it again.
+  const reads = () => calls().filter((call) => call[1] === 'run-list').length
+  await new Promise((resolve) => setTimeout(resolve, 300))
+  await mounted.request('state.get', {})
+  // The fake CLI logs a call once its process runs; give it a moment.
+  for (let i = 0; i < 40 && reads() < 2; i += 1) await new Promise((resolve) => setTimeout(resolve, 50))
+  assert.ok(reads() >= 2, 'a second read started')
+  await new Promise((resolve) => setTimeout(resolve, 3000))
+  assert.equal(mounted.posts.filter((post) => post.event === 'index.ready').length, 1, JSON.stringify(mounted.posts))
+})
+
+test('a failed first read of Orca Runs ends indexing instead of promising agents', async () => {
+  const { host } = setup()
+  process.env.FAKE_ORCA_FAIL_RUN_LIST = '1'
+  const mounted = await mountWorker(worker, { host })
+  const answer = await settled(() => mounted.request('state.get', {}))
+  assert.equal(answer.indexing, false)
+  assert.deepEqual(answer.orcaRuns, [])
 })
 
 test('gate answers: only ok or revise[: comment] count, popraw as the legacy name of revise', () => {

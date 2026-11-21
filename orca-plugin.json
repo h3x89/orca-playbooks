@@ -2,7 +2,7 @@
   "manifestVersion": 2,
   "id": "playbooks",
   "name": "Playbooks",
-  "version": "0.5.0",
+  "version": "0.5.1",
   "description": "Workflows of agents and human decision gates kept as YAML in the repository, run through Orca orchestration and drawn as a live graph.",
   "license": "MIT",
   "engines": {

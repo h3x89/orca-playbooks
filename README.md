@@ -9,6 +9,15 @@ worker for every agent step, runs script steps itself and asks you at every gate
 send the work back with a comment. The same panel also shows Orca Runs started by other agents and
 conversations that started agents.
 
+<p>
+  <img src="docs/images/playbook-graph.png" width="32%" alt="A playbook run waiting for your decision: the decision card above the graph of its steps">
+  <img src="docs/images/conversation-timeline.png" width="32%" alt="The timeline of a conversation: its agents' starts and ends, two of them working in parallel">
+  <img src="docs/images/conversation-agents.png" width="32%" alt="The agents a conversation started, with model, state, start and duration">
+</p>
+
+A playbook run waiting for your decision, then the Timeline and the Agents of a conversation that
+started seven agents (sample data).
+
 ## Requirements
 
 - Orca **1.4.263 or newer** on macOS. The plugin needs host API 1.10 (`agents.list` with `workspaceId`,
@@ -175,6 +184,8 @@ orca plugin validate .
 orca plugin test .         # parser, timeline, and full runs against a fake orca CLI (test/fake-orca.mjs)
 orca plugin types .        # writes the Orca typings to .orca/types/
 ```
+
+The repository is public, and so is every commit and pull request: read `AGENTS.md` before changing it.
 
 ## Uninstall
 
