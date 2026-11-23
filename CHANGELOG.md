@@ -1,5 +1,13 @@
 # Changelog
 
+## 0.5.2
+
+- Conversations show the first prompt in the header and on Timeline when the optional local Orca
+  journal is configured.
+- Agents shows worker dispatch dates. A worker's follow-up stays on Timeline and counts as another
+  round of the same session.
+- Timeline explains its parallel activity bars. Hover a bar to see its task.
+
 ## 0.5.1
 
 - The timeline fits a narrow panel: times use the 24-hour clock, an event's text wraps to at most two

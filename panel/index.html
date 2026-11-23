@@ -61,6 +61,10 @@
       .tl-row { display: grid; grid-template-columns: auto 34px 14px minmax(0, 1fr) auto; gap: 5px; align-items: start; padding: 3px 8px; font-size: 12px; cursor: default; }
       .tl-text { min-width: 0; overflow-wrap: anywhere; display: -webkit-box; -webkit-box-orient: vertical; -webkit-line-clamp: 2; line-clamp: 2; overflow: hidden; }
       .tl-row[data-task] { cursor: pointer; }
+      .tl-row.first-prompt { background: color-mix(in srgb, var(--ready) 12%, var(--bg)); }
+      #timelineHelp { font-size: 11px; color: var(--muted); margin-top: 6px; }
+      #timelineHelp p { margin: 4px 0; line-height: 1.4; }
+      .start-time { color: var(--muted); font-size: 11px; }
       .tl-row.sel { background: var(--card); }
       .tl-gap { padding: 2px 8px 2px 60px; color: var(--muted); font-size: 11px; font-style: italic; }
       .lanes { display: inline-flex; gap: 2px; height: 16px; }
@@ -72,6 +76,11 @@
         .tl-row { grid-template-columns: auto 34px 14px minmax(0, 1fr); }
         .tl-dur { grid-column: 4; }
         .tl-dur:empty { display: none; }
+      }
+      #sessionView, #agentsList { container-type: inline-size; }
+      @container (max-width: 360px) {
+        .srow { grid-template-columns: 14px minmax(0, 1fr); }
+        .srow > span:last-child { grid-column: 2; }
       }
       .tree { margin-top: 10px; }
       .srow { display: grid; grid-template-columns: 14px minmax(0, 1fr) auto; gap: 6px; padding: 5px 6px; border-radius: 6px; cursor: pointer; }
@@ -109,6 +118,12 @@
     <div id="tabs" class="tabs"></div>
     <div id="graphNote"></div>
     <div class="graph" id="graphWrap"><svg id="graph" width="10" height="10"></svg></div>
+    <details id="timelineHelp" hidden>
+      <summary>What are the bars?</summary>
+      <p>Each column tracks a task and can be reused. The bright bar marks this row’s task.
+        Faded bars mark other tasks still in progress. When more than eight tracks are needed,
+        the last column combines the extra tracks.</p>
+    </details>
     <div id="timeline"></div>
     <div id="agentsList"></div>
     <div id="drawer"></div>
@@ -168,6 +183,10 @@
       }
       // Dates follow Orca's locale and the words are English; times always use the 24-hour clock (short, one width in a narrow panel).
       const LOCALE = orca.locale || undefined
+      function timestamp(ms) {
+        const date = new Date(ms)
+        return `<time datetime="${date.toISOString()}" title="${esc(date.toLocaleString(LOCALE, { dateStyle: 'full', timeStyle: 'long' }))}">${esc(time(ms))}</time>`
+      }
       function time(ms) { return new Date(ms).toLocaleString(LOCALE, { day: '2-digit', month: '2-digit', hour: '2-digit', minute: '2-digit', hourCycle: 'h23' }) }
 
       let loads = 0
@@ -340,7 +359,7 @@
         const nodes = kind === 'session' ? (sessionView?.agents ?? []).map(agentNode)
           : kind === 'preview' ? (playbook?.steps ?? []).map((step) => ({ id: step.id, title: step.title, sub: step.kind === 'gate' ? 'gate' : step.kind === 'script' ? `script · ${step.run}` : [step.agent, step.model].filter(Boolean).join(' · '), label: 'plan', color: 'var(--plan)', needs: step.needs, depth: step.depth, kind: step.kind, loop: step.loop, attempt: 1 }))
           : viewNodes()
-        const agents = kind === 'session' ? nodes : nodes.filter((node) => node.kind === 'agent' && (kind === 'playbook' || node.dispatchId))
+        const agents = kind === 'session' ? groupWorkers(nodes) : nodes.filter((node) => node.kind === 'agent' && (kind === 'playbook' || node.dispatchId))
         const view = kind === 'preview' ? 'graph' : state.view ?? defaultView(kind, nodes)
         renderTabs(kind, view, kind === 'session' && !sessionView ? null : agents.length)
         if (session) renderSessionHead(session, sessionView)
@@ -349,11 +368,13 @@
         $('graphWrap').style.display = view === 'graph' && !note ? '' : 'none'
         $('graphNote').innerHTML = note ? `<div class="card muted">${note}</div>` : ''
         if (view !== 'timeline') $('timeline').innerHTML = ''
+        $('timelineHelp').hidden = view !== 'timeline' || !state.timelines[key ?? run?.id ?? runId]?.lanes
         if (view !== 'agents') $('agentsList').innerHTML = ''
         if (view === 'graph' && !note) drawGraph(nodes, run)
         else if (view === 'agents') renderAgents(agents, kind === 'session' && !sessionView)
         else if (view === 'timeline' && kind === 'session') {
           if (sessionView) renderTimeline(key, null)
+          else if (session.firstPromptAt !== undefined) renderTimeline(key, null)
           else $('timeline').innerHTML = ''
         } else if (view === 'timeline') {
           const anyRun = run?.id ?? runId
@@ -403,11 +424,12 @@
         }
       }
 
-      const ICON = { created: '＋', started: '▶', done: '✓', failed: '✗', report: '✉', question: '?', escalation: '!', message: '✉', gate: '◆', decision: '◆' }
-      const KIND_COLOR = { started: 'var(--running)', done: 'var(--done)', failed: 'var(--failed)', report: 'var(--done)', question: 'var(--ask)', escalation: 'var(--failed)', gate: 'var(--gate)', decision: 'var(--gate)' }
+      const ICON = { 'first-prompt': '●', 'follow-up': '↻', created: '＋', started: '▶', done: '✓', failed: '✗', report: '✉', question: '?', escalation: '!', message: '✉', gate: '◆', decision: '◆' }
+      const KIND_COLOR = { 'first-prompt': 'var(--ready)', 'follow-up': 'var(--running)', started: 'var(--running)', done: 'var(--done)', failed: 'var(--failed)', report: 'var(--done)', question: 'var(--ask)', escalation: 'var(--failed)', gate: 'var(--gate)', decision: 'var(--gate)' }
       function eventText(event) {
         switch (event.kind) {
           case 'created': return `Task: ${event.title}`
+          case 'follow-up': return `Follow-up: ${event.title}`
           case 'started': return `Start: ${event.title}`
           case 'done': return `End: ${event.title}`
           case 'failed': return `Failed: ${event.title}`
@@ -423,46 +445,55 @@
       // Top-down timeline, newest at the bottom like a chat: one row per event, lanes on the left show who worked in parallel.
       function renderTimeline(runId, run) {
         const box = $('timeline')
-        if (!state.timelines[runId]) {
+        const firstPromptAt = runId.startsWith('ses:') ? selectedSession()?.firstPromptAt : undefined
+        if (!state.timelines[runId] && firstPromptAt === undefined) {
           const failed = state.timelineErrors[runId]
           box.innerHTML = `<div class="${failed ? 'err' : 'muted'} small" style="margin-top:8px">${failed ? `Could not load the timeline: ${esc(failed)}` : 'Loading the timeline…'}</div>`
           return
         }
-        const timeline = state.timelines[runId]
-        const events = timeline.events
+        const timeline = state.timelines[runId] ?? { events: [], lanes: 0 }
+        const events = firstPromptAt === undefined ? timeline.events : [
+          { at: firstPromptAt, kind: 'first-prompt', title: 'First prompt sent' }, ...timeline.events
+        ].sort((a, b) => a.at - b.at)
+        $('timelineHelp').hidden = !timeline.lanes
         if (!events.length) { box.innerHTML = '<div class="muted small" style="margin-top:8px">Orca has no recorded events for this yet.</div>'; return }
         const MAX = 8
         const lanes = Math.min(timeline.lanes, MAX)
         const spans = {}
-        for (const event of events) if (event.lane !== undefined && event.spanStart !== undefined) spans[event.taskId] = { lane: Math.min(event.lane, MAX - 1), start: event.spanStart, end: event.spanEnd ?? Number.POSITIVE_INFINITY }
+        for (const event of events) if (event.lane !== undefined && event.spanStart !== undefined) spans[event.taskId] = { lane: Math.min(event.lane, MAX - 1), title: event.title, start: event.spanStart, end: event.spanEnd ?? Number.POSITIVE_INFINITY }
         const activeAt = (at) => Object.values(spans).filter((item) => item.start <= at && at <= item.end)
         const taskToNode = (taskId) => {
           if (!run) return taskId
           const entry = Object.entries(run.tasks).find(([, task]) => task.taskId === taskId)
           return entry ? entry[0] : null
         }
-        let html = `<div class="tl-head" title="Times from Orca's records: task created, worker started, report, closed.">${esc(clock(events[0].at))} → ${esc(clock(events[events.length - 1].at))} · at most ${timeline.lanes} working at once</div>`
+        const dayOf = (ms) => new Date(ms).toLocaleDateString(LOCALE, { day: '2-digit', month: '2-digit', year: 'numeric' })
+        const first = events[0].at
+        const last = events[events.length - 1].at
+        const manyDays = dayOf(first) !== dayOf(last)
+        const range = first === last ? time(first) : `${time(first)} → ${manyDays ? time(last) : clock(last)}`
+        let html = `<div class="tl-head">${esc(range)}${timeline.lanes ? ` · peak: ${timeline.lanes} parallel ${timeline.lanes === 1 ? 'task' : 'tasks'}` : ''}</div>`
         let previous = null
-        const dayOf = (ms) => new Date(ms).toLocaleDateString(LOCALE, { day: '2-digit', month: '2-digit' })
-        const manyDays = dayOf(events[0].at) !== dayOf(events[events.length - 1].at)
         for (const event of events) {
           if (manyDays && (!previous || dayOf(previous.at) !== dayOf(event.at))) html += `<div class="tl-gap" style="padding-left:8px;font-style:normal;font-weight:600">${esc(dayOf(event.at))}</div>`
           if (previous && event.at - previous.at > 120000) {
             const working = activeAt(previous.at + 1).length
-            html += `<div class="tl-gap">⋯ ${esc(span(event.at - previous.at))}${working ? ` · working: ${working}` : ' · no agent working'}</div>`
+            const context = previous.kind === 'first-prompt' ? ' until the next recorded event' : ` · tasks in progress: ${working}`
+            html += `<div class="tl-gap">⋯ ${esc(span(event.at - previous.at) + context)}</div>`
           }
           const active = activeAt(event.at)
           let bars = ''
           for (let lane = 0; lane < lanes; lane += 1) {
             const own = event.lane !== undefined && Math.min(event.lane, MAX - 1) === lane
-            const busy = active.some((item) => item.lane === lane)
-            const color = own ? (KIND_COLOR[event.kind] ?? 'var(--pending)') : busy ? 'color-mix(in srgb, var(--running) 45%, transparent)' : 'transparent'
-            bars += `<i style="background:${color}"></i>`
+            const names = [...new Set(active.filter((item) => item.lane === lane).map((item) => item.title))]
+            if (own && !names.includes(event.title)) names.unshift(event.title)
+            const color = own ? (KIND_COLOR[event.kind] ?? 'var(--pending)') : names.length ? 'color-mix(in srgb, var(--running) 45%, transparent)' : 'transparent'
+            bars += `<i style="background:${color}"${names.length ? ` title="${esc(names.join(' · '))}"` : ''}></i>`
           }
           const node = event.taskId ? taskToNode(event.taskId) : null
           const selected = node && state.selected === node
           const detail = event.kind === 'decision' || event.kind === 'report' ? '' : event.detail
-          html += `<div class="tl-row${selected ? ' sel' : ''}"${node ? ` data-task="${esc(node)}"` : ''}><span class="lanes">${bars}</span>` +
+          html += `<div class="tl-row${selected ? ' sel' : ''}${event.kind === 'first-prompt' ? ' first-prompt' : ''}"${node ? ` data-task="${esc(node)}"` : ''}><span class="lanes" aria-hidden="true">${bars}</span>` +
             `<span class="tl-time">${esc(clock(event.at))}</span><span style="color:${KIND_COLOR[event.kind] ?? 'var(--muted)'}">${ICON[event.kind] ?? '·'}</span>` +
             `<span class="tl-text" title="${esc(eventText(event) + (detail ? ` · ${detail}` : ''))}">${esc(cut(eventText(event), 200))}${detail ? `<span class="muted small"> · ${esc(cut(detail, 120))}</span>` : ''}</span>` +
             `<span class="tl-dur">${event.duration !== undefined ? esc(span(event.duration)) : ''}</span></div>`
@@ -531,7 +562,22 @@
         if (agent.live && LIVE[agent.live.state]) [label, color] = LIVE[agent.live.state]
         return { id: agent.id, title: agent.title, sub: [agent.agent, agent.model, agent.effort].filter(Boolean).join(' · ') || 'task', label, color, kind: 'agent', attempt: 1, status: agent.status,
           live: agent.live, since: agent.live?.since, dispatchId: agent.dispatchId, workspacePath: agent.workspacePath, result: agent.result, outcome: agent.outcome,
-          startedAt: agent.startedAt, endedAt: agent.endedAt, runId: agent.runId, needs: [], waitingFor: [] }
+          startedAt: agent.startedAt, endedAt: agent.endedAt, createdAt: agent.createdAt, workerSessionId: agent.workerSessionId,
+          runId: agent.runId, needs: [], waitingFor: [] }
+      }
+
+      /** In Agents, show each worker once. Timeline and the drawer still use the individual task rows. */
+      function groupWorkers(nodes) {
+        const groups = new Map()
+        const at = (node) => node.startedAt ?? node.createdAt ?? 0
+        for (const node of [...nodes].sort((a, b) => at(a) - at(b))) {
+          const id = node.workerSessionId ?? node.id
+          const previous = groups.get(id)
+          groups.set(id, previous
+            ? { ...node, title: previous.title, startedAt: previous.startedAt, rounds: previous.rounds + 1, endedAt: undefined }
+            : { ...node, rounds: 1 })
+        }
+        return [...groups.values()]
       }
 
       // A conversation: its state, the helpers and background work Orca sees in it live, and whether its agents loaded.
@@ -541,7 +587,7 @@
         const [label, color] = sessionStatus(session)
         const live = [...helpers(session).filter((item) => item.state !== 'done').map((item) => ({ kind: 'helper', description: item.title, state: item.state, since: item.since })), ...session.children]
         let head = `<div class="tree"><div class="srow"><span class="dot" style="background:${color}"></span>` +
-          `<span><b>${esc(cut(session.title, 60))}</b> <span class="muted small">${esc(session.agent ?? '')}</span>${session.tool ? `<div class="muted small">${esc(cut(session.tool + (session.toolInput ? ' · ' + session.toolInput : ''), 110))}</div>` : ''}</span>` +
+          `<span><b>${esc(cut(session.title, 60))}</b> <span class="muted small">${esc(session.agent ?? '')}</span>${session.firstPromptAt !== undefined ? `<div class="start-time">First prompt ${timestamp(session.firstPromptAt)}</div>` : ''}${session.tool ? `<div class="muted small">${esc(cut(session.tool + (session.toolInput ? ' · ' + session.toolInput : ''), 110))}</div>` : ''}</span>` +
           `<span class="small" style="color:${color}">${esc(label)}</span></div>`
         if (live.length) head += live.map((child) => `<div class="srow indent"><span class="dot" style="background:${child.state === 'working' ? 'var(--running)' : 'var(--pending)'}"></span>` +
           `<span>${esc(child.kind === 'helper' ? '● helper' : CHILD[child.kind] ?? child.kind)}${child.description ? ` <span class="muted small">· ${esc(cut(child.description, 80))}</span>` : ''}</span>` +
@@ -561,8 +607,10 @@
         const order = [...agents].sort((a, b) => working(b) - working(a) || (b.startedAt ?? 0) - (a.startedAt ?? 0))
         const shown = state.showAllAgents ? order : order.slice(0, 12)
         const rows = shown.map((node) => `<div class="srow${state.selected === node.id ? ' sel' : ''}" data-agent="${esc(node.id)}"><span class="dot" style="background:${node.color}"></span>` +
-          `<span>${esc(cut(node.title, 46))}<div class="muted small">${esc(node.sub)}</div></span>` +
-          `<span class="small" style="color:${node.color}">${esc(node.label)}<div class="muted small">${node.startedAt ? esc(clock(node.startedAt)) : ''}${node.startedAt && node.endedAt ? ' · ' + esc(span(node.endedAt - node.startedAt)) : ''}</div></span></div>`).join('')
+          `<span>${esc(cut(node.title, 46))}<div class="muted small">${esc(node.sub)}</div>` +
+          (node.startedAt === undefined && !node.rounds ? '' : `<div class="start-time">${node.startedAt === undefined ? '' : `Started ${timestamp(node.startedAt)}`}` +
+          (node.rounds > 1 ? `${node.startedAt === undefined ? '' : ' · '}${node.rounds} rounds` : node.startedAt && node.endedAt ? ` · ${esc(span(node.endedAt - node.startedAt))}` : '') + '</div>') +
+          `</span><span class="small" style="color:${node.color}">${esc(node.label)}</span></div>`).join('')
         const more = order.length > shown.length ? `<div class="row"><button id="allAgents" class="small">Show all (${order.length})</button></div>` : ''
         $('agentsList').innerHTML = `<div class="tree">${rows}${more}</div>`
         for (const element of $('agentsList').querySelectorAll('.srow[data-agent]')) element.onclick = () => { state.selected = state.selected === element.dataset.agent ? null : element.dataset.agent; void render() }

@@ -10,6 +10,7 @@ import { existsSync } from 'node:fs'
 import { mkdir, readdir, readFile, stat, writeFile } from 'node:fs/promises'
 import path from 'node:path'
 import { buildRunGraph, launchOf, workerActive, workspacePath, type CliTask, type CliWorker } from './orcaRuns'
+import { localFirstPrompts } from './firstPrompt'
 import { buildTimeline, parseTime, type CliGate, type CliMessage, type DispatchTimes } from './timeline'
 import { depths, loopSteps, parsePlaybook, renderPrompt, topologicalOrder, type GateStep, type Playbook, type ScriptStep, type Step } from './playbook'
 import type { AgentLive, RunNode, OrcaRunSummary, PlaybookInfo, RunInfo, SessionAgent, SessionChild, SessionInfo, StepInfo, StepRun, TimelineEvent, WorkspaceInfo } from './protocol'
@@ -222,7 +223,7 @@ export default function activate(orca: OrcaWorkerApi): void {
   /** The last run status a notification was shown for, so each change notifies once. */
   const notified = new Map<string, string>()
   /** Orca Runs and the workspace paths their workers ran in, refreshed while a panel asks for state. */
-  const index = new Map<string, OrcaRunSummary & { paths: string[]; bySession: Record<string, number> }>()
+  const index = new Map<string, OrcaRunSummary & { paths: string[]; bySession: Map<string, Set<string>> }>()
   let indexing: Promise<void> | undefined
   let indexedAt = 0
   /** The first read of Orca Runs failed: say so by ending "indexing" instead of promising agents that never come. */
@@ -233,6 +234,8 @@ export default function activate(orca: OrcaWorkerApi): void {
   const creators = new Map<string, string | null>()
   /** Sessions that are workers of some dispatch (`assignee_orca_session_id`): not conversations of their own. */
   const assignees = new Set<string>()
+  const workerSessionsByDispatch = new Map<string, string>()
+  const latestDispatchByTask = new Map<string, string>()
 
   async function creatorOf(task: { id: string; status?: string }): Promise<string | null> {
     if (creators.has(task.id)) return creators.get(task.id)!
@@ -243,10 +246,14 @@ export default function activate(orca: OrcaWorkerApi): void {
       return undefined
     })
     const creator = field(shown, 'dispatch', 'creator_orca_session_id') ?? null
+    const dispatchId = field(shown, 'dispatch', 'id')
     const assignee = field(shown, 'dispatch', 'assignee_orca_session_id')
-    if (assignee) assignees.add(assignee)
-    // A task not dispatched yet may still be; keep asking until it has a creator or is closed.
-    if (!failed && (creator || ['completed', 'failed'].includes(task.status ?? ''))) creators.set(task.id, creator)
+    if (dispatchId) {
+      latestDispatchByTask.set(task.id, dispatchId)
+      rememberWorkerSession(dispatchId, assignee)
+    }
+    // A dispatch can get its worker session id after its creator is already known.
+    if (!failed && ['completed', 'failed'].includes(task.status ?? '')) creators.set(task.id, creator)
     return creator
   }
 
@@ -260,6 +267,49 @@ export default function activate(orca: OrcaWorkerApi): void {
   const origins = new Map<string, DispatchTimes>()
   /** Dispatch times per finished dispatch (they no longer change). */
   const dispatchTimes = new Map<string, DispatchTimes>()
+  function rememberWorkerSession(dispatchId: string, sessionId: string | undefined): void {
+    if (!sessionId) return
+    assignees.add(sessionId)
+    workerSessionsByDispatch.set(dispatchId, sessionId)
+  }
+
+  /** Released structured workers may only identify their session through worker-show's pane key. */
+  async function readWorkerDispatch(id: string): Promise<DispatchTimes> {
+    const known = dispatchTimes.get(id)
+    if (known) return known
+    const shown = await orcaCli(['orchestration', 'worker-show', '--dispatch', id, '--full'], 30_000).catch(() => undefined)
+    const dispatch = ((shown ?? {}) as { dispatch?: Record<string, unknown> }).dispatch ?? {}
+    const pane = field(shown, 'dispatch', 'assigneePaneKey') ?? field(shown, 'dispatch', 'assignee_pane_key')
+    const paneSession = pane?.match(/^structured-agent-session-([0-9a-f]{8}(?:-[0-9a-f]{4}){3}-[0-9a-f]{12}):/i)?.[1]
+    rememberWorkerSession(id, field(shown, 'dispatch', 'assigneeOrcaSessionId') ?? field(shown, 'dispatch', 'assignee_orca_session_id') ?? paneSession)
+    const times: DispatchTimes = { ...launchOf(shown) }
+    const dispatched = parseTime(dispatch.dispatchedAt ?? dispatch.dispatched_at)
+    if (dispatched !== undefined) times.dispatchedAt = dispatched
+    const completed = parseTime(dispatch.completedAt ?? dispatch.completed_at)
+    if (completed !== undefined) times.completedAt = completed
+    const followUpOf = field(shown, 'dispatch', 'followUpOf') ?? field(shown, 'dispatch', 'follow_up_of_dispatch_id')
+    if (followUpOf) times.followUpOf = followUpOf
+    if (shown !== undefined && times.completedAt !== undefined) dispatchTimes.set(id, times)
+    return times
+  }
+
+  /** worker-list is newest first. A finished task can have cleared its current dispatch id. */
+  function firstDispatches(workers: CliWorker[]): Map<string, string> {
+    const byTask = new Map<string, string>()
+    for (const worker of workers) if (worker.taskId && worker.dispatchId) byTask.set(worker.taskId, worker.dispatchId)
+    return byTask
+  }
+
+  let promptCache: { path: unknown; ids: string; at: number; times: Promise<Map<string, number>> } | undefined
+  function firstPromptsFor(config: unknown, sessions: SessionInfo[]): Promise<Map<string, number>> {
+    const ids = sessions.filter((session) => !assignees.has(session.id)).map((session) => session.id).sort()
+    const key = ids.join(',')
+    if (promptCache && promptCache.path === config && promptCache.ids === key && Date.now() - promptCache.at < SESSIONS_MS) return promptCache.times
+    const times = localFirstPrompts(config, ids)
+    promptCache = { path: config, ids: key, at: Date.now(), times }
+    return times
+  }
+
   let psCache: { at: number; rows: { path?: string; agents?: Record<string, unknown>[] }[] } | undefined
 
   async function worktreeRows(): Promise<{ path?: string; agents?: Record<string, unknown>[] }[]> {
@@ -563,8 +613,23 @@ export default function activate(orca: OrcaWorkerApi): void {
             orcaCli(['orchestration', 'worker-list', '--run', row.id]).then((result) => (Array.isArray(result.workers) ? (result.workers as CliWorker[]) : [])).catch(() => [] as CliWorker[]),
             orcaCli(['orchestration', 'task-list', '--run', row.id]).then((result) => (Array.isArray(result.tasks) ? (result.tasks as { id: string; title?: string; status?: string }[]) : [])).catch(() => [] as { id: string; title?: string; status?: string }[])
           ])
-          const bySession: Record<string, number> = {}
-          for (const creator of await creatorsOf(tasks)) if (creator) bySession[creator] = (bySession[creator] ?? 0) + 1
+          const bySession = new Map<string, Set<string>>()
+          const owners = await creatorsOf(tasks)
+          const first = firstDispatches(workers)
+          const members = tasks.map((task, i) => {
+            const latest = latestDispatchByTask.get(task.id)
+            const shown = task.status === 'dispatched' ? latest ?? first.get(task.id) : first.get(task.id)
+            return { owner: owners[i], shown, latest, taskId: task.id }
+          })
+          for (let i = 0; i < members.length; i += 6) {
+            await Promise.all(members.slice(i, i + 6).map(async ({ owner, shown, latest, taskId }) => {
+              if (!owner) return
+              if (shown && shown !== latest && !workerSessionsByDispatch.has(shown)) await readWorkerDispatch(shown)
+              const workersOfOwner = bySession.get(owner) ?? new Set<string>()
+              workersOfOwner.add((shown && workerSessionsByDispatch.get(shown)) || taskId)
+              bySession.set(owner, workersOfOwner)
+            }))
+          }
           const paths = [...new Set(workers.map((worker) => workspacePath(worker.workspace)).filter((value): value is string => !!value))]
           // One coordinator often keeps a single Run for a whole session: then its objective names only the first task.
           const last = tasks[tasks.length - 1]?.title
@@ -637,12 +702,18 @@ export default function activate(orca: OrcaWorkerApi): void {
     const sessions = chosen ? sessionsOf((await worktreeRows()).find((row) => row.path === chosen!.path)) : []
     // A Run a conversation of this workspace dispatched belongs to that conversation, not to the list on its own.
     const attached = new Set<string>()
-    for (const session of sessions) if (assignees.has(session.id)) session.isWorker = true
+    const settings = sessions.length ? await orca.host.call('settings.get', {}).catch(() => undefined) : undefined
+    const firstPrompts = await firstPromptsFor(settings?.settings?.localJournalPath, sessions)
     for (const session of sessions) {
-      const mine = [...index.values()].filter((entry) => (entry.bySession[session.id] ?? 0) > 0).sort((a, b) => a.createdAt - b.createdAt)
+      if (assignees.has(session.id)) session.isWorker = true
+      else {
+        const firstPromptAt = firstPrompts.get(session.id)
+        if (firstPromptAt !== undefined) session.firstPromptAt = firstPromptAt
+      }
+      const mine = [...index.values()].filter((entry) => entry.bySession.has(session.id)).sort((a, b) => a.createdAt - b.createdAt)
       if (!mine.length) continue
       session.runIds = mine.map((entry) => entry.id)
-      session.agents = mine.reduce((sum, entry) => sum + entry.bySession[session.id], 0)
+      session.agents = new Set(mine.flatMap((entry) => [...(entry.bySession.get(session.id) ?? [])])).size
       for (const entry of mine) attached.add(entry.id)
     }
     const orcaRuns = chosen
@@ -701,31 +772,16 @@ export default function activate(orca: OrcaWorkerApi): void {
     // Orca clears dispatch_id on a finished task; worker-list keeps which dispatch worked on which task. It lists the newest
     // dispatch first, so the last match is the first dispatch of the task, i.e. its start.
     const workerRows = Array.isArray(workers.workers) ? (workers.workers as CliWorker[]) : []
+    const first = firstDispatches(workerRows)
     for (const task of tasks) {
-      if (task.dispatch_id) continue
-      const first = [...workerRows].reverse().find((worker) => worker.taskId === task.id && worker.dispatchId)
-      if (first?.dispatchId) task.dispatch_id = first.dispatchId
+      const fallback = first.get(task.id)
+      if (!task.dispatch_id && fallback) task.dispatch_id = fallback
     }
     const dispatches: Record<string, DispatchTimes> = {}
     const ids = [...new Set(tasks.map((task) => task.dispatch_id).filter((id): id is string => !!id))]
     for (let i = 0; i < ids.length; i += 6) {
       await Promise.all(ids.slice(i, i + 6).map(async (id) => {
-        const known = dispatchTimes.get(id)
-        if (known) {
-          dispatches[id] = known
-          return
-        }
-        const shown = await orcaCli(['orchestration', 'worker-show', '--dispatch', id, '--full'], 30_000).catch(() => undefined)
-        const dispatch = ((shown ?? {}) as { dispatch?: Record<string, unknown> }).dispatch ?? {}
-        const times: DispatchTimes = { ...launchOf(shown) }
-        const dispatched = parseTime(dispatch.dispatchedAt ?? dispatch.dispatched_at ?? dispatch.createdAt ?? dispatch.created_at)
-        if (dispatched !== undefined) times.dispatchedAt = dispatched
-        const completed = parseTime(dispatch.completedAt ?? dispatch.completed_at)
-        if (completed !== undefined) times.completedAt = completed
-        const followUpOf = typeof dispatch.followUpOf === 'string' ? dispatch.followUpOf : typeof dispatch.follow_up_of_dispatch_id === 'string' ? dispatch.follow_up_of_dispatch_id : undefined
-        if (followUpOf) times.followUpOf = followUpOf
-        if (shown !== undefined && times.completedAt !== undefined) dispatchTimes.set(id, times)
-        dispatches[id] = times
+        dispatches[id] = await readWorkerDispatch(id)
       }))
     }
     // worker-list knows the agent of a live worker even when worker-show does not.
@@ -797,14 +853,15 @@ export default function activate(orca: OrcaWorkerApi): void {
         const times = task.dispatch_id ? data.dispatches[task.dispatch_id] : undefined
         const agent: SessionAgent = { ...node, runId, ...(times?.agent && !node.agent ? { agent: times.agent } : {}), ...(times?.model && !node.model ? { model: times.model } : {}) }
         if (times?.effort && !node.effort) agent.effort = times.effort
-        const started = times?.dispatchedAt ?? parseTime(task.created_at)
-        if (started !== undefined) agent.startedAt = started
-        const ended = parseTime(task.completed_at) ?? times?.completedAt
+        if (times?.dispatchedAt !== undefined) agent.startedAt = times.dispatchedAt
+        const workerSessionId = workerSessionsByDispatch.get(task.dispatch_id)
+        if (workerSessionId) agent.workerSessionId = workerSessionId
+        const ended = times?.completedAt ?? parseTime(task.completed_at)
         if (ended !== undefined && ['completed', 'failed'].includes(task.status ?? '')) agent.endedAt = ended
         agents.push(agent)
       }
     }
-    const timeline = buildTimeline(tasks, gates, messages, dispatches)
+    const timeline = buildTimeline(tasks, gates, messages, dispatches, true)
     agents.sort((a, b) => (b.startedAt ?? 0) - (a.startedAt ?? 0))
     return json({ agents, events: timeline.events as TimelineEvent[], lanes: timeline.lanes })
   })
