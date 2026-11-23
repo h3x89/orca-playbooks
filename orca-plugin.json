@@ -2,7 +2,7 @@
   "manifestVersion": 2,
   "id": "playbooks",
   "name": "Playbooks",
-  "version": "0.5.1",
+  "version": "0.5.2",
   "description": "Workflows of agents and human decision gates kept as YAML in the repository, run through Orca orchestration and drawn as a live graph.",
   "license": "MIT",
   "engines": {
@@ -21,6 +21,16 @@
         "ui": "html"
       }
     ],
+    "settings": [
+      {
+        "key": "localJournalPath",
+        "title": "Local Orca journal path",
+        "description": "Optional. Use this local Orca database to look up first prompt times. Read-only. Clear to disable.",
+        "type": "string",
+        "default": "",
+        "placeholder": "/absolute/path/to/agent-session-domain.db"
+      }
+    ],
     "statusBarItems": [
       {
         "id": "runs",
@@ -31,6 +41,7 @@
   },
   "capabilities": [
     { "kind": "storage:own" },
+    { "kind": "settings:own" },
     { "kind": "workspace:read" },
     { "kind": "workspace:write" },
     { "kind": "agent:read" },

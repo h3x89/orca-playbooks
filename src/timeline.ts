@@ -46,7 +46,7 @@ function payloadOf(message: CliMessage): Record<string, unknown> {
  * Events of a Run in time order. Each task gets a lane (a column for drawing parallel work), reused once
  * the task before it in that lane has ended.
  */
-export function buildTimeline(tasks: CliTask[], gates: CliGate[], messages: CliMessage[], dispatches: Record<string, DispatchTimes>): { events: TimelineEvent[]; lanes: number } {
+export function buildTimeline(tasks: CliTask[], gates: CliGate[], messages: CliMessage[], dispatches: Record<string, DispatchTimes>, showFollowUps = false): { events: TimelineEvent[]; lanes: number } {
   const events: TimelineEvent[] = []
   const titles = new Map(tasks.map((task) => [task.id, task.display_name || task.task_title || task.id]))
   const spans: { taskId: string; start: number; end?: number }[] = []
@@ -61,7 +61,7 @@ export function buildTimeline(tasks: CliTask[], gates: CliGate[], messages: CliM
     const ended = parseTime(task.completed_at) ?? dispatch?.completedAt
     const who = [dispatch?.agent, dispatch?.model].filter(Boolean).join(' · ')
     if (created !== undefined) push({ at: created, kind: 'created', taskId: task.id, title, detail: taskDeps(task.deps).length ? `waits for: ${taskDeps(task.deps).map((dep) => titles.get(dep) ?? dep).join(', ')}` : undefined })
-    if (started !== undefined) push({ at: started, kind: 'started', taskId: task.id, title, detail: who || undefined })
+    if (started !== undefined) push({ at: started, kind: showFollowUps && dispatch?.followUpOf ? 'follow-up' : 'started', taskId: task.id, title, detail: who || undefined })
     if (ended !== undefined && (task.status === 'completed' || task.status === 'failed')) {
       const from = started ?? created
       push({ at: ended, kind: task.status === 'failed' ? 'failed' : 'done', taskId: task.id, title, duration: from !== undefined ? Math.max(0, ended - from) : undefined })
@@ -122,7 +122,7 @@ function merged(events: TimelineEvent[]): TimelineEvent[] {
   for (const event of events) {
     if (!event.taskId) continue
     if (event.kind === 'created') {
-      const start = events.find((other) => other.kind === 'started' && other.taskId === event.taskId && Math.abs(other.at - event.at) <= NEAR)
+      const start = events.find((other) => (other.kind === 'started' || other.kind === 'follow-up') && other.taskId === event.taskId && Math.abs(other.at - event.at) <= NEAR)
       if (start) {
         if (event.detail && !start.detail?.includes(event.detail)) start.detail = [start.detail, event.detail].filter(Boolean).join(' · ')
         drop.add(event)

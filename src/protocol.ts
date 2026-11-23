@@ -111,7 +111,7 @@ export type TimelineEvent = {
   at: number
   /** Order Orca recorded it in, for events in the same millisecond. */
   order: number
-  kind: 'created' | 'started' | 'done' | 'failed' | 'report' | 'question' | 'escalation' | 'message' | 'gate' | 'decision'
+  kind: 'created' | 'started' | 'follow-up' | 'done' | 'failed' | 'report' | 'question' | 'escalation' | 'message' | 'gate' | 'decision'
   taskId?: string
   title: string
   detail?: string
@@ -142,6 +142,7 @@ export type SessionInfo = {
   /** `live` when Orca watches this session's own subagents; `unverifiable` when it cannot. */
   subagents?: string
   updatedAt?: number
+  firstPromptAt?: number
   /** State of the conversation's own last turn (the session as a whole may be `working` while it only monitors helpers). */
   mainState?: string
   mainSince?: number
@@ -156,7 +157,7 @@ export type SessionInfo = {
 }
 
 /** One agent a conversation started: a task of one of its Runs, with its worker. */
-export type SessionAgent = RunNode & { runId: string; startedAt?: number; endedAt?: number }
+export type SessionAgent = RunNode & { runId: string; startedAt?: number; endedAt?: number; workerSessionId?: string }
 
 /** A playbook run waiting for a decision in another workspace. */
 export type WaitingElsewhere = { runId: string; title: string; workspaceId: string; workspaceName: string }

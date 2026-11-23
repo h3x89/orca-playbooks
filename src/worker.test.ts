@@ -64,6 +64,7 @@ function setup() {
   mkdirSync(other)
   const world = {
     focus: { workspaceId: 'repo1::' + workspace, branch: 'main', displayName: 'demo', terminals: [] } as Record<string, unknown> | null,
+    localJournalPath: '',
     agents: [] as { terminalId: string | null; title: string | null; agent: string | null; state: string; stateStartedAt: number; task?: { title: string } | null }[]
   }
   const host = mockHost({
@@ -74,6 +75,7 @@ function setup() {
       ], truncated: false },
       'workspace.readContext': () => world.focus,
       'agents.list': () => ({ agents: world.agents }),
+      'settings.get': () => ({ settings: { localJournalPath: world.localJournalPath } }),
       'terminal.create': { terminalId: 'term_coord' },
       'terminal.focus': { focused: true },
       'workspace.open': { opened: true },
@@ -183,6 +185,33 @@ test('runs scripts, the agent and the gate, loops on revise and finishes on an O
   assert.ok(titles.every((title) => / · run_\d+#[12]$/.test(title)), titles.join(', '))
 })
 
+test('a configured local journal supplies first-prompt metadata to the panel', async () => {
+  const { workspace, host, world } = setup()
+  const sessionId = '00000000-0000-0000-0000-000000000001'
+  const timestamp = Date.parse('2026-11-22T21:44:51Z')
+  writeFileSync(process.env.FAKE_ORCA_STATE!, JSON.stringify({
+    n: 0, plans: 0, gates: [], runs: [], tasks: [], workers: [], messages: [],
+    worktrees: [{ path: workspace, agents: [{ orcaSessionId: sessionId, paneKey: 'demo' }] }]
+  }))
+  const database = path.join(dir, 'agent-session-domain.db')
+  execFileSync('sqlite3', ['-batch', '-init', os.devNull, database, `
+    CREATE TABLE journal_chat_state (session_id TEXT, epoch TEXT, retained_sequence INT);
+    CREATE TABLE journal_items (session_id TEXT, epoch TEXT, item_id TEXT, kind TEXT, message_role TEXT, root INT, command_entry INT, ordinal INT);
+    CREATE TABLE journal_submission_attempts (session_id TEXT, epoch TEXT, item_id TEXT,
+      submitted_at INT, admitted_personal INT, dispatch_state TEXT, current INT, request_failure INT, ordinal INT);
+    INSERT INTO journal_chat_state VALUES ('${sessionId}', 'now', 0);
+    INSERT INTO journal_items VALUES ('${sessionId}', 'now', 'prompt', 'message', 'user', 1, 0, 0);
+    INSERT INTO journal_submission_attempts VALUES ('${sessionId}', 'now', 'prompt', ${timestamp}, 1, 'accepted', 1, 0, 0);
+  `])
+  const mounted = await mountWorker(worker, { host })
+  const firstPrompt = async () => (await mounted.request('state.get', {})).sessions[0].firstPromptAt
+  assert.equal(await firstPrompt(), undefined)
+  world.localJournalPath = database
+  assert.equal(await firstPrompt(), timestamp)
+  world.localJournalPath = ''
+  assert.equal(await firstPrompt(), undefined, 'disabling the setting drops the cached result')
+})
+
 test('follows the focused workspace and shows the other Orca Runs that worked there as a graph', async () => {
   const { workspace, other, host, world } = setup()
   writeFileSync(process.env.FAKE_ORCA_STATE!, JSON.stringify({
@@ -205,7 +234,7 @@ test('follows the focused workspace and shows the other Orca Runs that worked th
     ] }],
     workers: [
       { dispatchId: 'ctx_e1', taskId: 'task_e1', runId: 'run_ext1', state: 'ready', liveness: 'live', agent: 'claude/claude-opus-5-5', workspace: 'repo1::' + workspace, dispatchedAt: '2026-11-18 20:00:05', assignee: 'sess_worker' },
-      { dispatchId: 'ctx_e1b', taskId: 'task_e1b', runId: 'run_ext1', state: 'succeeded', liveness: 'exited', agent: null, workspace: 'repo1::' + workspace, dispatchedAt: '2026-11-18 20:10:05', followUpOf: 'ctx_e1' },
+      { dispatchId: 'ctx_e1b', taskId: 'task_e1b', runId: 'run_ext1', state: 'succeeded', liveness: 'exited', agent: null, workspace: 'repo1::' + workspace, dispatchedAt: '2026-11-18 20:10:05', followUpOf: 'ctx_e1', assignee: 'sess_worker' },
       { dispatchId: 'ctx_e2', taskId: 'task_e2', runId: 'run_ext2', state: 'succeeded', liveness: 'exited', agent: null, workspace: 'repo2::' + other, launch: { agent: 'codex', model: 'gpt-6.2-sol', effort: 'high' } }
     ]
   }))
@@ -219,11 +248,12 @@ test('follows the focused workspace and shows the other Orca Runs that worked th
   // run_ext1 was dispatched by the conversation sess_main of this workspace: it belongs to it and is not listed on its own.
   assert.deepEqual(here.orcaRuns.map((run) => run.id), [])
   assert.deepEqual(here.sessions.map((session) => [session.id, session.parentPaneKey ?? null, session.state, session.children.length, session.runIds ?? null, session.agents ?? 0, session.isWorker ?? false]),
-    [['sess_main', null, 'working', 1, ['run_ext1'], 2, false], ['sess_child', 'pane_main', 'blocked', 0, null, 0, false], ['sess_worker', null, 'done', 0, null, 0, true]])
+    [['sess_main', null, 'working', 1, ['run_ext1'], 1, false], ['sess_child', 'pane_main', 'blocked', 0, null, 0, false], ['sess_worker', null, 'done', 0, null, 0, true]])
   const conversation = await mounted.request('session.view', { sessionId: 'sess_main', runIds: ['run_ext1'] })
   assertPlainJson(conversation)
   assert.deepEqual(conversation.agents.map((agent) => [agent.id, agent.model ?? null]), [['task_e1b', 'claude-opus-5-5'], ['task_e1', 'claude-opus-5-5']], 'the follow-up inherits the model; the gate is not an agent')
-  assert.equal(conversation.agents.length, here.sessions[0].agents, 'the Agents tab and the list entry count the same agents')
+  assert.deepEqual(conversation.agents.map((agent) => agent.workerSessionId), ['sess_worker', 'sess_worker'], 'both rounds link to one worker session')
+  assert.ok(conversation.events.some((event) => event.kind === 'follow-up' && event.taskId === 'task_e1b'))
   assert.equal(conversation.agents.find((agent) => agent.id === 'task_e1')!.startedAt, Date.parse('2026-11-18T20:00:05Z'))
   assert.ok(conversation.events.some((event) => event.kind === 'gate' && event.title === 'Decision'), 'the pending gate is on the conversation timeline')
   assert.ok(conversation.events.some((event) => event.kind === 'started' && event.title === 'Review X' && /claude-opus-5-5/.test(event.detail ?? '')), JSON.stringify(conversation.events))

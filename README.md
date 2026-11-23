@@ -92,8 +92,8 @@ The panel follows the workspace selected in Orca's left sidebar (**Pin** keeps i
 | Tab | Playbook run | Orca Run started by an agent | Conversation |
 | --- | --- | --- | --- |
 | Graph | steps and `needs`, live states, the Revise loop | tasks and their dependencies; without dependencies, a note instead of a graph | a note: a conversation declares no dependencies |
-| Timeline | task created, worker started, questions, reports, gates, decisions and ends, with durations; bars on the left show who worked in parallel | the same | all work of all its agents, across its Runs |
-| Agents | agent steps with model, state, start and duration | tasks a worker took | every agent the conversation started |
+| Timeline | task created, worker started, questions, reports, gates, decisions and ends, with durations; bars on the left show who worked in parallel | the same | first prompt when available, plus worker events and follow-ups across Runs |
+| Agents | agent steps with model, state, start and duration | tasks a worker took | workers with their dispatch date and number of rounds |
 
 Where the Graph tab has no graph, it says why and how to get one: describe the work as a playbook in
 `.orca/playbooks/` and start it from the panel. Click a step, a timeline row or an agent to see its
@@ -103,6 +103,20 @@ workspace when Orca no longer lists the terminal).
 A decision card appears above the tabs when a gate waits for you, and a banner when one waits in another
 workspace. Orca notifications and the status bar item say when a run waits for you, fails, is sent back
 or finishes.
+
+### First prompt and parallel work
+
+In **Settings → Plugins → Playbooks**, set **Local Orca journal path** to the absolute path
+of this installation's `agent-session-domain.db` to enable first-prompt times. On a standard macOS
+installation the path is `~/Library/Application Support/orca/agent-session-domain.db`. The worker
+needs an SQLite CLI with JSON output and `-safe` support on its PATH. It queries the local journal in read-only mode
+and returns only timestamps for the workspace's Orca sessions. The setting is empty by default.
+Older conversations show a time when the journal still has the original submission. A missing or
+incompatible journal leaves the time absent. Clear the setting to turn this off. This fallback is
+temporary pending [Orca's first-prompt timestamp API](https://github.com/stablyai/orca/issues/47231).
+
+Expand **What are the bars?** on Timeline for the key. Columns are reused as tasks finish and the
+bright bar marks the task of that row. Hover a bar to see the task name.
 
 ### Conversations and their agents
 
