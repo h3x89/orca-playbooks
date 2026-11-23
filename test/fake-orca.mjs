@@ -86,7 +86,7 @@ switch (command) {
   }
   case 'worker-show': {
     const worker = state.workers.find((w) => w.dispatchId === flag('--dispatch'))
-    ok({ worker: { startOptions: { agent: worker?.launch?.agent, launch: { effective: worker?.launch ?? {} } } }, dispatch: { dispatchedAt: worker?.dispatchedAt ?? null, completedAt: worker?.completedAt ?? null, followUpOf: worker?.followUpOf ?? null } })
+    ok({ worker: { startOptions: { agent: worker?.launch?.agent, launch: { effective: worker?.launch ?? {} } } }, dispatch: { dispatchedAt: worker?.dispatchedAt ?? null, completedAt: worker?.completedAt ?? null, followUpOf: worker?.followUpOf ?? null, assigneePaneKey: worker?.assigneePaneKey ?? null } })
     break
   }
   case 'worker-list':

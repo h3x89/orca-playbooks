@@ -214,6 +214,8 @@ test('a configured local journal supplies first-prompt metadata to the panel', a
 
 test('follows the focused workspace and shows the other Orca Runs that worked there as a graph', async () => {
   const { workspace, other, host, world } = setup()
+  const reviewer = '00000000-0000-0000-0000-000000000001'
+  const retry = '00000000-0000-0000-0000-000000000002'
   writeFileSync(process.env.FAKE_ORCA_STATE!, JSON.stringify({
     n: 100, plans: 0,
     gates: [{ id: 'gate_x', task_id: 'task_gate', question: 'OK?', status: 'pending', created_at: '2026-11-18 20:13:10', resolved_at: null }],
@@ -230,11 +232,13 @@ test('follows the focused workspace and shows the other Orca Runs that worked th
     worktrees: [{ path: workspace, agents: [
       { orcaSessionId: 'sess_main', paneKey: 'pane_main', conversationName: 'Coordinator', agentType: 'claude', state: 'working', subagentObservation: 'live', children: [{ kind: 'command', description: 'Wait for workers', state: 'working' }] },
       { orcaSessionId: 'sess_child', paneKey: 'pane_child', parentPaneKey: 'pane_main', conversationName: 'Review X', agentType: 'claude', state: 'blocked' },
-      { orcaSessionId: 'sess_worker', paneKey: 'pane_worker', conversationName: 'Finished worker', agentType: 'claude', state: 'done' }
+      { orcaSessionId: reviewer, paneKey: 'pane_worker', conversationName: 'Finished worker', agentType: 'claude', state: 'done' }
     ] }],
     workers: [
-      { dispatchId: 'ctx_e1', taskId: 'task_e1', runId: 'run_ext1', state: 'ready', liveness: 'live', agent: 'claude/claude-opus-5-5', workspace: 'repo1::' + workspace, dispatchedAt: '2026-11-18 20:00:05', assignee: 'sess_worker' },
-      { dispatchId: 'ctx_e1b', taskId: 'task_e1b', runId: 'run_ext1', state: 'succeeded', liveness: 'exited', agent: null, workspace: 'repo1::' + workspace, dispatchedAt: '2026-11-18 20:10:05', followUpOf: 'ctx_e1', assignee: 'sess_worker' },
+      { dispatchId: 'ctx_e1_retry', taskId: 'task_e1b', runId: 'run_ext1', state: 'succeeded', workspace: 'repo1::' + workspace,
+        dispatchedAt: '2026-11-18 20:11:05', assignee: retry },
+      { dispatchId: 'ctx_e1', taskId: 'task_e1', runId: 'run_ext1', state: 'ready', liveness: 'live', agent: 'claude/claude-opus-5-5', workspace: 'repo1::' + workspace, dispatchedAt: '2026-11-18 20:00:05', assignee: reviewer },
+      { dispatchId: 'ctx_e1b', taskId: 'task_e1b', runId: 'run_ext1', state: 'succeeded', liveness: 'exited', agent: null, workspace: 'repo1::' + workspace, dispatchedAt: '2026-11-18 20:10:05', completedAt: '2026-11-18T20:10:45Z', followUpOf: 'ctx_e1', assignee: reviewer, assigneePaneKey: `structured-agent-session-${reviewer}:pane` },
       { dispatchId: 'ctx_e2', taskId: 'task_e2', runId: 'run_ext2', state: 'succeeded', liveness: 'exited', agent: null, workspace: 'repo2::' + other, launch: { agent: 'codex', model: 'gpt-6.2-sol', effort: 'high' } }
     ]
   }))
@@ -248,12 +252,14 @@ test('follows the focused workspace and shows the other Orca Runs that worked th
   // run_ext1 was dispatched by the conversation sess_main of this workspace: it belongs to it and is not listed on its own.
   assert.deepEqual(here.orcaRuns.map((run) => run.id), [])
   assert.deepEqual(here.sessions.map((session) => [session.id, session.parentPaneKey ?? null, session.state, session.children.length, session.runIds ?? null, session.agents ?? 0, session.isWorker ?? false]),
-    [['sess_main', null, 'working', 1, ['run_ext1'], 1, false], ['sess_child', 'pane_main', 'blocked', 0, null, 0, false], ['sess_worker', null, 'done', 0, null, 0, true]])
+    [['sess_main', null, 'working', 1, ['run_ext1'], 1, false], ['sess_child', 'pane_main', 'blocked', 0, null, 0, false], [reviewer, null, 'done', 0, null, 0, true]])
   const conversation = await mounted.request('session.view', { sessionId: 'sess_main', runIds: ['run_ext1'] })
   assertPlainJson(conversation)
   assert.deepEqual(conversation.agents.map((agent) => [agent.id, agent.model ?? null]), [['task_e1b', 'claude-opus-5-5'], ['task_e1', 'claude-opus-5-5']], 'the follow-up inherits the model; the gate is not an agent')
-  assert.deepEqual(conversation.agents.map((agent) => agent.workerSessionId), ['sess_worker', 'sess_worker'], 'both rounds link to one worker session')
+  assert.deepEqual(conversation.agents.map((agent) => agent.workerSessionId), [reviewer, reviewer], 'both displayed dispatches belong to the original reviewer, not its later retry')
   assert.ok(conversation.events.some((event) => event.kind === 'follow-up' && event.taskId === 'task_e1b'))
+  assert.equal(conversation.agents[0].dispatchId, 'ctx_e1b', 'the session identity and displayed round both come from the same dispatch')
+  assert.equal(conversation.agents[0].endedAt, Date.parse('2026-11-18T20:10:45Z'), 'the end time belongs to the same dispatch as its start')
   assert.equal(conversation.agents.find((agent) => agent.id === 'task_e1')!.startedAt, Date.parse('2026-11-18T20:00:05Z'))
   assert.ok(conversation.events.some((event) => event.kind === 'gate' && event.title === 'Decision'), 'the pending gate is on the conversation timeline')
   assert.ok(conversation.events.some((event) => event.kind === 'started' && event.title === 'Review X' && /claude-opus-5-5/.test(event.detail ?? '')), JSON.stringify(conversation.events))
