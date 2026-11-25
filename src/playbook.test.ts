@@ -1,4 +1,5 @@
 import { assert, test } from 'orca/testing'
+import { execFileSync } from 'node:child_process'
 import { readdirSync, readFileSync } from 'node:fs'
 import { fileURLToPath } from 'node:url'
 import { depths, loopSteps, parsePlaybook, renderPrompt, topologicalOrder } from './playbook'
@@ -116,10 +117,53 @@ test('a revise loop reruns goto, the steps between it and the gate, the gate and
 test('the example playbooks are valid', () => {
   const dir = fileURLToPath(new URL('../examples/.orca/playbooks/', import.meta.url))
   const files = readdirSync(dir).filter((name) => name.endsWith('.yaml')).sort()
-  assert.deepEqual(files, ['sequential-vs-parallel.yaml', 'weather-air.yaml'])
+  assert.deepEqual(files, ['sequential-vs-parallel.yaml', 'weather-air.yaml', 'weather-research.yaml'])
   for (const file of files) assert.deepEqual(parsePlaybook(file.replace('.yaml', ''), readFileSync(dir + file, 'utf8')).errors, [], file)
   const parallel = parsePlaybook('sequential-vs-parallel', readFileSync(dir + 'sequential-vs-parallel.yaml', 'utf8')).playbook!
   assert.deepEqual(depths(parallel.steps), { left: 0, right: 0, first: 1, second: 2, done: 3 })
+  const research = parsePlaybook('weather-research', readFileSync(dir + 'weather-research.yaml', 'utf8')).playbook!
+  assert.deepEqual(research.steps.map((step) => step.kind), ['agent', 'agent', 'script', 'agent', 'script', 'agent', 'gate', 'script'])
+  assert.deepEqual(depths(research.steps), { forecast: 0, air: 0, summary: 1, plan: 2, 'prepare-review': 3, review: 4, decision: 5, finish: 6 })
+  assert.deepEqual(loopSteps(research.steps, 'decision', 'plan').map((step) => step.id), ['plan', 'prepare-review', 'review', 'decision', 'finish'])
+})
+
+test('the ASDLC example and BPMN agree on steps, dependencies, and Revise', () => {
+  const root = new URL('../examples/asdlc/', import.meta.url)
+  const yaml = readFileSync(new URL('.orca/playbooks/review-gated-fix.yaml', root), 'utf8')
+  const { playbook, errors } = parsePlaybook('review-gated-fix', yaml)
+  assert.deepEqual(errors, [])
+  assert.ok(playbook)
+
+  const readModel = [
+    'import json, sys, xml.etree.ElementTree as ET',
+    'process = ET.parse(sys.argv[1]).find("{*}process")',
+    'nodes = [[e.get("id"), e.tag.split("}")[-1]] for e in process if e.tag.endswith("Task")]',
+    'flows = [dict(e.attrib) for e in process.findall("{*}sequenceFlow")]',
+    'print(json.dumps({"nodes": nodes, "flows": flows}))'
+  ].join('\n')
+  const model: {
+    nodes: [string, 'serviceTask' | 'scriptTask' | 'userTask'][]
+    flows: { sourceRef: string; targetRef: string; name?: string }[]
+  } = JSON.parse(execFileSync('python3', ['-c', readModel, fileURLToPath(new URL('process.bpmn', root))], { encoding: 'utf8' }))
+  const kinds = { serviceTask: 'agent', scriptTask: 'script', userTask: 'gate' }
+  assert.deepEqual(model.nodes.map(([id, kind]) => [id, kinds[kind]]), playbook.steps.map(({ id, kind }) => [id, kind]))
+
+  const revision = model.flows.find((edge) => edge.name?.startsWith('Revise · max '))
+  assert.ok(revision)
+  const forward = model.flows.filter((edge) => edge !== revision)
+  const stepIds = new Set(playbook.steps.map((step) => step.id))
+  function parentsOf(node: string): string[] {
+    return forward.filter((edge) => edge.targetRef === node)
+      .flatMap(({ sourceRef }) => stepIds.has(sourceRef) ? [sourceRef] : parentsOf(sourceRef))
+  }
+  for (const step of playbook.steps) {
+    assert.deepEqual([...new Set(parentsOf(step.id))].sort(), [...step.needs].sort(), step.id)
+  }
+  const gate = playbook.steps.find((step) => step.id === 'decide')
+  assert.ok(gate?.kind === 'gate' && gate.loop)
+  assert.deepEqual(parentsOf(revision.sourceRef), [gate.id])
+  assert.deepEqual(forward.filter((edge) => edge.sourceRef === revision.targetRef).map((edge) => edge.targetRef), [gate.loop.goto])
+  assert.equal(revision.name, `Revise · max ${gate.loop.maxLoops} loops`)
 })
 
 test('fills known placeholders and leaves unknown ones', () => {

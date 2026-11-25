@@ -1,0 +1,92 @@
+title: Review-gated fix
+description: Parallel research, a human plan decision, and an independently reviewed local deployment.
+steps:
+  - id: research-code
+    title: Research the code and test
+    agent: codex
+    keep_open: true
+    prompt: |
+      Read task.md, duration.py, and test_duration.py. Identify the cause,
+      the allowed file change, and evidence from the test. Write only your
+      step report in the run directory.
+  - id: research-rules
+    title: Research acceptance rules
+    agent: codex
+    keep_open: true
+    prompt: |
+      Read task.md. List the acceptance checks, edit scope, conditions that
+      block deployment, and rollback. Write only your step report in the
+      run directory.
+  - id: reproduce
+    title: Reproduce with the original test
+    script: {run: check.py, timeout_sec: 30}
+  - id: plan
+    title: Write a plan from both reports
+    needs: [research-code, research-rules, reproduce]
+    agent: codex
+    keep_open: true
+    prompt: |
+      Read task.md and research-code.md, research-rules.md, and reproduce.txt
+      in {{run_dir}}. Write plan.md in the run directory using both reports.
+      Include the edit scope, exact test command, destination, rollback,
+      and both review points. Apply the operator comment on a revised attempt.
+      Write only the plan file in the run directory.
+  - id: prepare-plan-review
+    title: Record the plan version to review
+    needs: [plan]
+    script: {run: check.py, timeout_sec: 30}
+  - id: review-plan
+    title: Review the plan independently
+    needs: [prepare-plan-review]
+    agent: codex
+    keep_open: true
+    prompt: |
+      Compare task.md with {{run_dir}}/plan.md independently. Review the
+      scope, test, human decision, candidate review, deployment, and rollback.
+      Compute the SHA-256 of the exact plan bytes you reviewed.
+      Write {{run_dir}}/review-plan.md as JSON with the keys verdict (PASS or
+      BLOCK), subject_sha256 (the plan digest), and reason (a nonempty string).
+      Write only this report and put the JSON directly in it. A completed
+      review can report either verdict.
+  - id: decide
+    title: Decide after the plan review
+    needs: [review-plan]
+    gate:
+      question: Approve this plan, or send it back for revision?
+    on:
+      revise: {goto: plan, max_loops: 2}
+  - id: verify-plan
+    title: Check the plan verdict and digest
+    needs: [decide]
+    script: {run: check.py, timeout_sec: 30}
+  - id: fix
+    title: Apply the approved fix
+    needs: [verify-plan]
+    agent: codex
+    keep_open: true
+    prompt: |
+      Read task.md, plan.md, approved-plan.json, and reproduce.txt. The last
+      three files are in {{run_dir}}. Edit only duration.py and write a short
+      step report. Leave the Git index and test alone. The next step reruns
+      the test and records its result.
+  - id: verify-candidate
+    title: Rerun the test and record the candidate
+    needs: [fix]
+    script: {run: check.py, timeout_sec: 30}
+  - id: review-deploy
+    title: Review the candidate before deployment
+    needs: [verify-candidate]
+    agent: codex
+    keep_open: true
+    prompt: |
+      Read task.md and plan.md, fix.diff, candidate.json, reproduce.txt, and
+      verify-candidate.txt in {{run_dir}}. Review the diff, test evidence,
+      deployment destination, and rollback. Compute the SHA-256 of the
+      exact candidate.json bytes you reviewed. Write only
+      {{run_dir}}/review-deploy.md as JSON with verdict (PASS or BLOCK),
+      subject_sha256 (the candidate digest), and reason (a nonempty string).
+      Put the JSON directly in the report.
+  - id: deploy
+    title: Verify the verdict and run the deployed copy
+    needs: [review-deploy]
+    script: {run: check.py, timeout_sec: 30}

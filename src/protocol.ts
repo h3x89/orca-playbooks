@@ -78,6 +78,7 @@ export type RunNode = {
   title: string
   taskTitle: string
   status: string
+  attempt?: number
   needs: string[]
   depth: number
   agent?: string
@@ -104,6 +105,7 @@ export type OrcaRunSummary = {
   workers: number
   tasks: number
   active: boolean
+  coordinatedByAgent?: boolean
 }
 
 /** One thing that happened in a Run, for the top-down timeline. */
@@ -111,8 +113,9 @@ export type TimelineEvent = {
   at: number
   /** Order Orca recorded it in, for events in the same millisecond. */
   order: number
-  kind: 'created' | 'started' | 'follow-up' | 'done' | 'failed' | 'report' | 'question' | 'escalation' | 'message' | 'gate' | 'decision'
+  kind: 'created' | 'started' | 'follow-up' | 'done' | 'failed' | 'superseded' | 'sent-back' | 'report' | 'question' | 'escalation' | 'message' | 'gate' | 'decision'
   taskId?: string
+  attempt?: number
   title: string
   detail?: string
   duration?: number

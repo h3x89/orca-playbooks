@@ -1,22 +1,163 @@
 # Playbooks for Orca
 
-An [Orca](https://github.com/stablyai/orca) plugin that runs agent workflows kept as YAML files in your
-repository, and shows any agent work in a workspace as a graph, a timeline and a list of agents.
+An [Orca](https://github.com/stablyai/orca) plugin for running agent workflows
+defined in YAML in your repository. Follow each run in a live graph, review
+the results, and decide when work can move forward.
 
-A playbook is a list of steps: agent steps, script steps and human decision gates, linked by `needs`.
-The plugin turns a playbook into an ordinary Orca orchestration Run (one task per step), starts an Orca
-worker for every agent step, runs script steps itself and asks you at every gate, where you approve or
-send the work back with a comment. The same panel also shows Orca Runs started by other agents and
-conversations that started agents.
+A Markdown runbook explains how your team works. A playbook turns the steps,
+dependencies, and approvals into rules the plugin follows on each run.
+Review changes to those rules in Git, alongside the code they apply to.
 
-<p>
-  <img src="docs/images/playbook-graph.png" width="32%" alt="A playbook run waiting for your decision: the decision card above the graph of its steps">
-  <img src="docs/images/conversation-timeline.png" width="32%" alt="The timeline of a conversation: its agents' starts and ends, two of them working in parallel">
-  <img src="docs/images/conversation-agents.png" width="32%" alt="The agents a conversation started, with model, state, start and duration">
-</p>
+[See it run](#human-in-the-loop-example) · [Two ways to coordinate](#two-ways-to-coordinate-work-in-orca) ·
+[Install and try it](#quick-start) · [YAML reference](#playbook-format)
 
-A playbook run waiting for your decision, then the Timeline and the Agents of a conversation that
-started seven agents (sample data).
+## Human-in-the-loop example
+
+**Review-gated fix** takes a software change from investigation through local
+deployment. Two agents research the bug while a script reproduces it. The
+planner waits for all three results.
+
+```mermaid
+---
+config:
+  flowchart:
+    rankSpacing: 14
+    nodeSpacing: 20
+    padding: 5
+---
+flowchart TB
+    Research("Research and reproduce") --> Plan("Write the plan")
+    Plan --> PlanReview("Independent plan review")
+    PlanReview --> Gate{"Approve?"}
+    Gate -. "Revise · up to two times" .-> Plan
+    Gate -->|"Revise · limit reached"| Sent([Sent back])
+    Gate -->|OK| Check("Check plan verdict")
+    Check -->|PASS| Fix("Fix and retest")
+    Fix -->|Test passes| Review("Independent fix review")
+    Review --> Deploy("Verify and probe local copy")
+    Deploy -->|Probe passes| Verified([Verified])
+    Check -->|Check fails| Failed([Failed])
+    Fix -->|Test fails| Failed
+    Deploy -->|Check fails| Failed
+
+    classDef step fill:transparent,stroke:#8993A0,stroke-width:1px
+    classDef gate fill:transparent,stroke:#B57EDC,stroke-width:2px
+    classDef success fill:transparent,stroke:#3FB27F,stroke-width:2px
+    classDef error fill:transparent,stroke:#E5534B,stroke-width:2px
+    class Research,Plan,PlanReview,Check,Fix,Review,Deploy,Sent step
+    class Gate gate
+    class Verified success
+    class Failed error
+```
+
+The [BPMN model](examples/asdlc/process.bpmn) shows each step and the exits
+after approval, testing, and deployment. A failed script at any step stops
+the run.
+
+### Define the workflow in YAML
+
+In the [executable playbook](examples/asdlc/.orca/playbooks/review-gated-fix.yaml),
+`needs` makes the decision wait for the independent plan review.
+**Revise** sends your comment back to the planning step, up to twice in this
+example. After **OK**, the next script checks the plan and verdict.
+
+```yaml
+  - id: decide
+    title: Decide after the plan review
+    needs: [review-plan]
+    gate:
+      question: Approve this plan, or send it back for revision?
+    on:
+      revise: {goto: plan, max_loops: 2}
+  - id: verify-plan
+    title: Check the plan verdict and digest
+    needs: [decide]
+    script: {run: check.py, timeout_sec: 30}
+```
+
+### Watch a revision and approval
+
+The first reviewer asked for the exact test command and deployment path.
+The operator chose **Revise**, and the plugin kept the research while fresh
+agents wrote and reviewed the new plan. The next decision card is shown
+here in a replay of the recorded run.
+
+![Orca decision card after Revise with the revised plan's PASS verdict and one revision left](docs/images/asdlc-revise.png)
+
+After **OK**, the example's script verified the plan verdict and digest. The
+original test passed after the fix, an independent reviewer approved the
+candidate, and the local copy returned **`2 minutes = 120 seconds`**.
+
+<details>
+<summary>See the full run</summary>
+
+Both research agents and the reproduction script finished before the plan
+became ready.
+
+![Graph showing the research and reproduction steps complete, with the plan ready](docs/images/asdlc-research.png)
+
+The final script checked the candidate verdict and probed the deployed copy.
+
+![Timeline and step result showing that the deployed copy passed and returned 120 seconds](docs/images/asdlc-deployment.png)
+
+</details>
+
+| Who | What they do in this example |
+| --- | --- |
+| **Agents** | Research, plan, fix, and review. Each step has its own prompt and report. Prompts can read earlier results from the run directory. |
+| **Scripts** | Reproduce the bug, rerun the original test, and verify that the verdict matches the plan or candidate. Failed checks block dependent work. |
+| **You** | Read the review and choose **OK** or **Revise**. The revision loop returns to the planning step and passes it your comment. |
+
+- [Run this example with Codex](examples/asdlc/README.md) in a standalone demo repository.
+- [Read the task briefing](examples/asdlc/task.md) used by the agents.
+
+## Two ways to coordinate work in Orca
+
+```mermaid
+---
+config:
+  flowchart:
+    rankSpacing: 26
+    nodeSpacing: 24
+    padding: 8
+---
+flowchart TB
+    subgraph YAMLRoute ["Start a YAML playbook"]
+        direction TB
+        Start("Click Start") -->|"Reads the YAML"| Plugin("Playbooks worker")
+    end
+    subgraph AgentRoute ["Ask an agent to coordinate"]
+        direction TB
+        Request("Give the agent a task") -->|"Agent plans the work"| Agent("Coordinator agent")
+    end
+    YAMLRoute -->|"Records declared steps and gates"| Records[("Orca Runs, tasks and decisions")]
+    AgentRoute -->|"Records tasks and dependencies it creates"| Records
+    Records -->|"Reads run state"| Panel("Playbooks panel<br/>Graph · Timeline · Agents")
+
+    classDef neutral fill:transparent,stroke:#8993A0,stroke-width:1px
+    classDef coordinator fill:transparent,stroke:#5B8DEF,stroke-width:2px
+    class Start,Request,Records,Panel neutral
+    class Plugin,Agent coordinator
+    style YAMLRoute fill:transparent,stroke:#8993A0
+    style AgentRoute fill:transparent,stroke:#8993A0
+```
+
+**Start a YAML playbook.** You or an agent can operate **Start** in the panel.
+The plugin validates the YAML, dispatches ready agent steps, runs scripts,
+opens gates, and applies the declared **Revise** loop. The `Playbook: …`
+terminal supplies the run's identity in Orca.
+
+**Ask an agent to coordinate.** The agent creates a native Orca Run and
+decides which tasks, dependencies, checks, and gates to create. A playbook
+shared as instructions gives it a procedure to follow.
+
+In **Run or conversation**, select an Orca Run with recorded dependencies to
+see its **Graph**. For work grouped under a conversation, use **Timeline** and
+**Agents** to see dispatches and results. [Panel reference](#the-panel)
+
+Paseo uses a Playbook Manager agent by default and offers a managerless mode.
+The Orca plugin coordinates YAML runs through its worker. [Manager modes in
+Paseo](https://github.com/lerenn/paseo-playbooks#runs-with-no-playbook-manager)
 
 ## Requirements
 
@@ -28,6 +169,9 @@ started seven agents (sample data).
 - Workspaces on this computer only (see Limitations).
 
 ## Quick start
+
+Start with a script-only example to see the panel and a decision gate.
+The review-gated workflow above has its own [demo setup](examples/asdlc/README.md).
 
 1. Install the plugin from a folder:
 
@@ -44,13 +188,41 @@ started seven agents (sample data).
    orca plugin install h3x89/orca-playbooks --approve <fingerprint>
    ```
 
-2. Copy `examples/.orca/playbooks/` to `.orca/playbooks/` in a repository that is a workspace in Orca.
-3. Open that workspace, then the **Playbooks** panel in the right sidebar.
+2. If you installed straight from Git, clone the repository locally to get the examples.
+   From the cloned `orca-playbooks` directory, make a demo repository:
+
+   ```sh
+   demo=$(mktemp -d)
+   mkdir -p "$demo/.orca"
+   cp -R examples/.orca/playbooks "$demo/.orca/"
+   git -C "$demo" init
+   git -C "$demo" add .
+   orca repo add --path "$demo"
+   ```
+
+   You can also copy the example directory into an existing workspace. The panel reads
+   `.orca/playbooks/` in the selected workspace.
+3. Open the demo workspace, then the **Playbooks** panel in the right sidebar. Click **Refresh**
+   if the panel was open while you copied the files.
 4. Pick **Sequential vs parallel** (script steps only, no agent) and press **Start**. Watch the Graph
    and Timeline tabs, then answer the gate with **OK**.
-5. Try **Weather and air**: two scripts fetch the forecast and air quality from
+5. Try **Weather research** with Codex configured in Orca. Two agents write reports from fictional
+   forecast and air data in parallel. A script combines the reports, an agent drafts a plan for a walk,
+   and a separate agent reviews the saved draft. In **Graph**, select the review and open **Step result**. Try
+   **Revise** with a comment such as `Make the plan fit a 20-minute walk.` The two research results
+   are reused and two new agents draft and review the revised plan. With a passing review, choose
+   **OK** and read **Show the approved plan → Step result**. In **Agents**, select a step or choose
+   **Show agent** to inspect a session. The first pass uses four Codex sessions and each Revise
+   uses two more, up to two revisions.
+6. Try **Weather and air**: two scripts fetch the forecast and air quality from
    [Open-Meteo](https://open-meteo.com) (no API key), a Claude agent writes a plan, and you approve it or
    press **Revise** with a comment to have the plan written again.
+
+You can ask an agent already in the demo workspace to walk you through it:
+
+> Open `.orca/playbooks/weather-research.yaml`. Explain which steps run in parallel and how
+> to start Weather research in the Orca Playbooks panel. Show me where to read the review,
+> how to send the plan back once with Revise, and how to find the approved plan.
 
 ## Trust
 
@@ -96,7 +268,8 @@ The panel follows the workspace selected in Orca's left sidebar (**Pin** keeps i
 | Agents | agent steps with model, state, start and duration | tasks a worker took | workers with their dispatch date and number of rounds |
 
 Where the Graph tab has no graph, it says why and how to get one: describe the work as a playbook in
-`.orca/playbooks/` and start it from the panel. Click a step, a timeline row or an agent to see its
+`.orca/playbooks/` and start it from the panel. Hover over a graph step or focus it from the keyboard
+to see its full name, state, and dependencies it is waiting for. Select a step, a timeline row or an agent to see its
 result, the **Last lines** of its transcript and **Show agent** (focuses its terminal, or opens its
 workspace when Orca no longer lists the terminal).
 
@@ -115,8 +288,11 @@ Older conversations show a time when the journal still has the original submissi
 incompatible journal leaves the time absent. Clear the setting to turn this off. This fallback is
 temporary pending [Orca's first-prompt timestamp API](https://github.com/stablyai/orca/issues/47231).
 
-Expand **What are the bars?** on Timeline for the key. Columns are reused as tasks finish and the
-bright bar marks the task of that row. Hover a bar to see the task name.
+Expand **What do the bars show?** to read the Timeline key. The full bar belongs to the step
+in the row, and thinner bars show other work at the same time. Amber marks work in progress.
+Timeline colors the event icons for starts, completions, decisions and failures. In **Agents**,
+the dot beside each name shows its state. **Superseded** marks downstream steps replaced
+before they started. **Sent back · Revise** highlights the decision.
 
 ### Conversations and their agents
 
@@ -210,6 +386,11 @@ orca plugin uninstall <plugin-key>
 
 Close any "Playbook: …" terminals that are still open. You can delete `<repo>/.orca/runs/`. Runs and
 tasks stay in Orca's orchestration history.
+
+## Acknowledgements
+
+Repository-defined playbooks, approval gates, and revision loops were inspired
+by [Paseo Playbooks](https://github.com/lerenn/paseo-playbooks).
 
 ## License
 

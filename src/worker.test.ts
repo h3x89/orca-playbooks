@@ -2,7 +2,7 @@
 // step, the gate, a revise loop from the panel and the final OK given from the CLI.
 import { afterEach, assert, mockHost, mountWorker, test } from 'orca/testing'
 import { execFileSync } from 'node:child_process'
-import { chmodSync, existsSync, mkdirSync, mkdtempSync, readFileSync, rmSync, writeFileSync } from 'node:fs'
+import { chmodSync, existsSync, mkdirSync, mkdtempSync, readFileSync, readdirSync, rmSync, writeFileSync } from 'node:fs'
 import os from 'node:os'
 import path from 'node:path'
 import { fileURLToPath } from 'node:url'
@@ -57,6 +57,7 @@ function setup() {
     PLAYBOOKS_POLL_MS: '100',
     PLAYBOOKS_INDEX_MS: '200',
     FAKE_ORCA_FAIL_WORKER: '',
+    FAKE_ORCA_REPORTS: '',
     FAKE_ORCA_SLOW_RUN_LIST_MS: '',
     FAKE_ORCA_FAIL_RUN_LIST: ''
   })
@@ -128,6 +129,8 @@ test('scriptOutput takes the outputs line, else plain stdout', () => {
 
 test('runs scripts, the agent and the gate, loops on revise and finishes on an OK from the CLI', async () => {
   const { workspace, host } = setup()
+  const weatherScript = path.join(workspace, '.orca', 'playbooks', 'scripts', 'weather.sh')
+  writeFileSync(weatherScript, 'while [ ! -f proceed ]; do sleep 0.05; done\n' + readFileSync(weatherScript, 'utf8'))
   const mounted = await mountWorker(worker, { host })
   const state = await mounted.request('state.get', {})
   assertPlainJson(state)
@@ -137,6 +140,17 @@ test('runs scripts, the agent and the gate, loops on revise and finishes on an O
   const { run } = await mounted.request('run.start', { workspaceId: state.workspaceId!, file: 'weather.yaml' })
   assert.ok(existsSync(path.join(workspace, '.orca', 'runs', '.gitignore')))
   const read = async () => (await mounted.request('state.get', {})).runs.find((candidate) => candidate.id === run.id)!
+
+  try {
+    const active = await until(read, (current) => current.tasks.weather.status === 'dispatched')
+    const { events } = await mounted.request('run.timeline', { runId: run.id })
+    const running = events.find((event) => event.taskId === active.tasks.weather.taskId && event.kind === 'started')
+    assert.ok(running, 'a running script has a start event before its report is written')
+    assert.equal(running.spanStart, running.at)
+    assert.equal(running.spanEnd, undefined)
+  } finally {
+    writeFileSync(path.join(run.runDir, 'proceed'), '')
+  }
 
   const waiting = await until(read, (current) => current.status === 'waiting')
   assertPlainJson(await mounted.request('state.get', {}))
@@ -157,7 +171,7 @@ test('runs scripts, the agent and the gate, loops on revise and finishes on an O
   assert.equal(looped.tasks.plan.attempt, 2)
   assert.equal(looped.tasks.decision.attempt, 2)
   const respec = calls().filter((call) => call[1] === 'task-create' && call.includes('plan')).pop()!
-  assert.match(respec[respec.indexOf('--spec') + 1], /Reviewer comments on the previous version \(address them\): consider the time of day/)
+  assert.match(respec[respec.indexOf('--spec') + 1], /Operator comment from the decision gate \(address it\): consider the time of day/)
 
   const again = await until(read, (current) => current.status === 'waiting' && current.tasks.decision.attempt === 2)
   assert.equal(again.tasks.plan.output, 'PLAN v2')
@@ -181,6 +195,7 @@ test('runs scripts, the agent and the gate, loops on revise and finishes on an O
   assert.ok(events.some((event) => event.kind === 'done' && event.title === 'plan' && /done/.test(event.detail ?? '')), 'the worker report is folded into the end row')
   assert.ok(events.every((event, index) => index === 0 || events[index - 1].at <= event.at), 'events in time order')
   assert.ok(events.some((event) => event.kind === 'decision' && /revise: consider the time of day/.test(event.detail ?? '')), 'the revise decision is on the timeline')
+  assert.ok(events.some((event) => event.kind === 'sent-back' && event.attempt === 1), 'Revise is recorded separately from a failure')
   const titles = calls().filter((call) => call[1] === 'task-create').map((call) => call[call.indexOf('--task-title') + 1])
   assert.ok(titles.every((title) => / · run_\d+#[12]$/.test(title)), titles.join(', '))
 })
@@ -393,4 +408,114 @@ test('a revise with no loops left stops the run (also under the legacy name popr
   const stopped = (await mounted.request('gate.resolve', { runId: run.id, stepId: 'decision', choice: 'popraw', comment: 'twice' })).run
   assert.equal(stopped.status, 'rejected')
   assert.equal(stopped.loops, 1)
+})
+
+test('Weather research retains both reports across Revise and publishes after approval', async () => {
+  const { workspace, host } = setup()
+  const books = path.join(workspace, '.orca', 'playbooks')
+  const example = new URL('../examples/.orca/playbooks/', import.meta.url)
+  for (const file of ['weather-research.yaml', 'scripts/weather-summary.py']) {
+    writeFileSync(path.join(books, file), readFileSync(new URL(file, example)))
+  }
+  const research = { 'forecast.md': '18°C, 10% chance of rain', 'air.md': 'EAQI 25' }
+  process.env.FAKE_ORCA_REPORTS = JSON.stringify({
+    ...research, 'plan.md': 'Plan for a walk', 'review.md': 'BLOCK\nName a duration.'
+  })
+  const mounted = await mountWorker(worker, { host })
+  const state = await mounted.request('state.get', {})
+  const { run } = await mounted.request('run.start', { workspaceId: state.workspaceId!, file: 'weather-research.yaml' })
+  const read = async () => (await mounted.request('state.get', {})).runs.find((candidate) => candidate.id === run.id)!
+  const first = await until(read, (current) => current.status === 'waiting')
+  assert.match(first.tasks.summary.output ?? '', /18°C.*\n\nEAQI 25/)
+  assert.match(first.tasks.review.output ?? '', /^BLOCK/)
+  assert.equal(first.tasks.finish.status, 'pending')
+  assert.equal(calls().filter((call) => call[1] === 'worker-start').length, 4)
+
+  const comment = 'Make it a 20-minute walk.'
+  process.env.FAKE_ORCA_REPORTS = JSON.stringify({
+    ...research, 'plan.md': '20-minute walk at 18°C, 10% chance of rain and EAQI 25.', 'review.md': 'PASS\nAll sample values are cited.'
+  })
+  const revised = (await mounted.request('gate.resolve', { runId: run.id, stepId: 'decision', choice: 'revise', comment })).run
+  assert.equal(revised.tasks.forecast.taskId, first.tasks.forecast.taskId)
+  assert.equal(revised.tasks.air.taskId, first.tasks.air.taskId)
+  assert.equal(revised.tasks.summary.taskId, first.tasks.summary.taskId)
+  assert.equal(revised.tasks.review.attempt, 2)
+  const second = await until(read, (current) => current.status === 'waiting' && current.tasks.decision.attempt === 2)
+  assert.match(second.tasks.review.output ?? '', /^PASS/)
+  const earlier = readdirSync(run.runDir).find((name) => name.startsWith('prior-plan-'))
+  assert.ok(earlier)
+  assert.match(readFileSync(path.join(run.runDir, earlier, 'plan-for-review.md'), 'utf8'), /Plan for a walk/)
+  assert.match(readFileSync(path.join(run.runDir, earlier, 'review.md'), 'utf8'), /^BLOCK/)
+  const planTasks = calls().filter((call) => call[1] === 'task-create' && call.includes('Draft a plan for a walk'))
+  assert.equal(planTasks.length, 2)
+  assert.ok(planTasks[1].some((argument) => argument.includes(comment)))
+  assert.equal(calls().filter((call) => call[1] === 'worker-start').length, 6)
+
+  await mounted.request('gate.resolve', { runId: run.id, stepId: 'decision', choice: 'ok' })
+  const completed = await until(read, (current) => current.status === 'done')
+  assert.match(completed.tasks.finish.output ?? '', /20-minute walk at 18°C/)
+})
+
+test('the ASDLC example stops on BLOCK and deploys the verified copy on PASS', async () => {
+  const { workspace, host } = setup()
+  const example = new URL('../examples/asdlc/', import.meta.url)
+  const books = path.join(workspace, '.orca', 'playbooks')
+  const scripts = path.join(books, 'scripts')
+  for (const name of ['duration.py', 'test_duration.py', '.gitignore']) {
+    writeFileSync(path.join(workspace, name), readFileSync(new URL(name, example)))
+  }
+  writeFileSync(path.join(scripts, 'check.py'), readFileSync(new URL('.orca/playbooks/scripts/check.py', example)))
+  execFileSync('git', ['init', '-q'], { cwd: workspace })
+
+  writeFileSync(path.join(scripts, 'review.py'), [
+    'import hashlib, json, os',
+    'from pathlib import Path',
+    'root = Path(os.environ["PLAYBOOK_RUN_DIR"])',
+    'is_plan = os.environ["PLAYBOOK_STEP"] == "review-plan"',
+    'subject = root / ("plan.md" if is_plan else "candidate.json")',
+    'if is_plan: subject.write_text("Change only duration.py")',
+    'verdict = os.environ["PLAYBOOK_INPUT_VERDICT"] if is_plan else "PASS"',
+    'review = {"verdict": verdict, "subject_sha256": hashlib.sha256(subject.read_bytes()).hexdigest(), "reason": "Test report"}',
+    '(root / ("review-plan.md" if is_plan else "review-deploy.md")).write_text(json.dumps(review))'
+  ].join('\n'))
+  writeFileSync(path.join(scripts, 'fix.py'), [
+    'from pathlib import Path',
+    'code = Path(__file__).resolve().parents[3] / "duration.py"',
+    'code.write_text(code.read_text().replace("* 100", "* 60"))'
+  ].join('\n'))
+
+  for (const verdict of ['BLOCK', 'PASS']) {
+    writeFileSync(path.join(books, verdict.toLowerCase() + '.yaml'), [
+      `title: ASDLC ${verdict}`,
+      `inputs: {verdict: {default: ${verdict}}}`,
+      'steps:',
+      '  - {id: reproduce, script: {run: check.py}}',
+      '  - {id: review-plan, needs: [reproduce], script: {run: review.py}}',
+      '  - {id: verify-plan, needs: [review-plan], script: {run: check.py}}',
+      '  - {id: fix, needs: [verify-plan], script: {run: fix.py}}',
+      '  - {id: verify-candidate, needs: [fix], script: {run: check.py}}',
+      '  - {id: review-deploy, needs: [verify-candidate], script: {run: review.py}}',
+      '  - {id: deploy, needs: [review-deploy], script: {run: check.py}}'
+    ].join('\n'))
+  }
+  execFileSync('git', ['add', '.'], { cwd: workspace })
+
+  const mounted = await mountWorker(worker, { host })
+  const state = await mounted.request('state.get', {})
+  async function run(file: string) {
+    const { run: started } = await mounted.request('run.start', { workspaceId: state.workspaceId!, file })
+    const read = async () => (await mounted.request('state.get', {})).runs.find((item) => item.id === started.id)!
+    return until(read, (item) => item.status === 'done' || item.status === 'failed')
+  }
+
+  const blocked = await run('block.yaml')
+  assert.equal(blocked.status, 'failed')
+  assert.equal(blocked.tasks['verify-plan'].status, 'failed')
+  assert.equal(blocked.tasks.fix.status, 'pending')
+  assert.equal(existsSync(path.join(blocked.runDir, 'deploy')), false)
+
+  const passed = await run('pass.yaml')
+  assert.equal(passed.status, 'done')
+  assert.match(passed.tasks.deploy.output ?? '', /2 minutes = 120 seconds/)
+  assert.match(readFileSync(path.join(passed.runDir, 'deploy', 'duration.py'), 'utf8'), /minutes \* 60/)
 })

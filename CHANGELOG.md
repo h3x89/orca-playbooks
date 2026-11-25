@@ -1,5 +1,17 @@
 # Changelog
 
+## 0.5.3
+
+- The README follows a review-gated fix from parallel research through Revise, approval, and a
+  verified local deployment. Try the included YAML example or explore its BPMN diagram.
+- The quick start includes a weather example with parallel research, a script, an independent
+  review, and a human decision with a revision loop.
+- Graph, Timeline, and Agents use the same status markers. The graph shows step details on hover
+  and keyboard focus, and routes dependencies around wrapped cards.
+- Timeline uses colored event icons for starts, completions, decisions and failures. Thick and thin
+  bars distinguish the row's step from other work at that time. Amber highlights steps currently
+  working. Agents shows a colored status dot beside each name.
+
 ## 0.5.2
 
 - Conversations show the first prompt in the header and on Timeline when the optional local Orca

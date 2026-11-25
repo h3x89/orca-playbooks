@@ -387,7 +387,7 @@ export default function activate(orca: OrcaWorkerApi): void {
   function specFor(run: StoredRun, step: Step, comment: string): string {
     if (step.kind === 'gate') return `Human decision gate: ${step.question} A person answers it in the Playbooks panel; do not start a worker for it.`
     if (step.kind === 'script') return `Script step ${step.run}: the Playbooks plugin runs it itself and writes the result to ${path.join(run.runDir, `${step.id}.txt`)}. Do not start a worker for it.`
-    const remark = comment ? `\n\nReviewer comments on the previous version (address them): ${comment}` : ''
+    const remark = comment ? `\n\nOperator comment from the decision gate (address it): ${comment}` : ''
     return renderPrompt(step.prompt, promptValues(run, step, comment)) + remark +
       `\n\nPlaybook "${run.title}", step "${step.title}". You work in ${run.workspacePath}. Write the result to ${path.join(run.runDir, `${step.id}.md`)}. Do not commit or push. Do not send \`ask\` or \`escalation\`: nobody will answer them; if something blocks you, finish with \`worker_done --outcome failed\` and the reason. At the end, send worker_done with a short summary.`
   }
@@ -430,7 +430,7 @@ export default function activate(orca: OrcaWorkerApi): void {
     const taskId = state.taskId
     scripts.add(taskId)
     state.status = 'dispatched'
-    state.startedAt = Date.now()
+    const startedAt = state.startedAt = Date.now()
     let result: { status: 'completed' | 'failed'; output?: string; error?: string }
     try {
       const file = path.join(run.workspacePath, PLAYBOOK_DIR, 'scripts', step.run)
@@ -443,14 +443,16 @@ export default function activate(orca: OrcaWorkerApi): void {
     } catch (error) {
       result = { status: 'failed', error: (error as Error).message }
     }
+    const completedAt = Date.now()
     try {
-      await orcaCli(['orchestration', 'task-update', '--id', taskId, '--status', result.status, '--result', JSON.stringify(result.error ? { error: result.error } : { file: `${step.id}.txt` }), '--from', run.handle])
+      const output = result.error ? { error: result.error } : { file: `${step.id}.txt` }
+      await orcaCli(['orchestration', 'task-update', '--id', taskId, '--status', result.status, '--result', JSON.stringify({ ...output, script: step.run, startedAt, completedAt }), '--from', run.handle])
     } catch (error) {
       result = { status: 'failed', error: (error as Error).message }
     }
     scripts.delete(taskId)
     if (run.tasks[step.id]?.taskId !== taskId) return
-    Object.assign(state, { status: result.status, endedAt: Date.now(), error: result.error })
+    Object.assign(state, { status: result.status, endedAt: completedAt, error: result.error })
     if (result.output !== undefined) state.output = result.output.length > OUTPUT_CHARS ? `${result.output.slice(0, OUTPUT_CHARS)}\n…` : result.output
     refreshStatus(run)
     run.updatedAt = Date.now()
@@ -634,7 +636,7 @@ export default function activate(orca: OrcaWorkerApi): void {
           // One coordinator often keeps a single Run for a whole session: then its objective names only the first task.
           const last = tasks[tasks.length - 1]?.title
           const title = tasks.length > 1 ? `${tasks.length} tasks · last: ${last ?? '?'}` : row.objective || last || row.id
-          index.set(row.id, { ...row, title, paths, bySession, workers: workers.length, tasks: tasks.length, active: workers.some(workerActive) })
+          index.set(row.id, { ...row, title, paths, bySession, workers: workers.length, tasks: tasks.length, active: workers.some(workerActive), coordinatedByAgent: bySession.size > 0 })
         }))
       }
       for (const id of [...index.keys()]) if (!rows.some((row) => row.id === id)) index.delete(id)

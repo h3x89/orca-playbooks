@@ -1,0 +1,461 @@
+<?xml version='1.0' encoding='utf-8'?>
+<bpmn:definitions xmlns:bpmn="http://www.omg.org/spec/BPMN/20100524/MODEL" xmlns:bpmndi="http://www.omg.org/spec/BPMN/20100524/DI" xmlns:dc="http://www.omg.org/spec/DD/20100524/DC" xmlns:di="http://www.omg.org/spec/DD/20100524/DI" xmlns:xsi="http://www.w3.org/2001/XMLSchema-instance" id="AASDLCDefinitions" targetNamespace="https://github.com/h3x89/orca-playbooks/examples/asdlc">
+  <bpmn:process id="AASDLCV2" name="Review-gated fix" isExecutable="false">
+    <bpmn:documentation>The diagram follows the Orca example YAML. Service tasks run fresh agents, script tasks check evidence or deploy the local copy, and the user task waits for the operator. Revise returns to the plan at most twice. A failed script at any step stops the run, including reproduction and preparation of the plan for review. The diagram details the exits after approval, testing, and deployment.</bpmn:documentation>
+    <bpmn:laneSet id="role">
+      <bpmn:lane id="lane-agents" name="Agents">
+        <bpmn:flowNodeRef>research-code</bpmn:flowNodeRef>
+        <bpmn:flowNodeRef>research-rules</bpmn:flowNodeRef>
+        <bpmn:flowNodeRef>plan-entry</bpmn:flowNodeRef>
+        <bpmn:flowNodeRef>plan</bpmn:flowNodeRef>
+        <bpmn:flowNodeRef>review-plan</bpmn:flowNodeRef>
+        <bpmn:flowNodeRef>fix</bpmn:flowNodeRef>
+        <bpmn:flowNodeRef>review-deploy</bpmn:flowNodeRef>
+      </bpmn:lane>
+      <bpmn:lane id="lane-playbooks" name="Playbooks · scripts and coordination">
+        <bpmn:flowNodeRef>start</bpmn:flowNodeRef>
+        <bpmn:flowNodeRef>fork</bpmn:flowNodeRef>
+        <bpmn:flowNodeRef>reproduce</bpmn:flowNodeRef>
+        <bpmn:flowNodeRef>join</bpmn:flowNodeRef>
+        <bpmn:flowNodeRef>prepare-plan-review</bpmn:flowNodeRef>
+        <bpmn:flowNodeRef>verify-plan</bpmn:flowNodeRef>
+        <bpmn:flowNodeRef>plan-passed</bpmn:flowNodeRef>
+        <bpmn:flowNodeRef>stop-plan</bpmn:flowNodeRef>
+        <bpmn:flowNodeRef>verify-candidate</bpmn:flowNodeRef>
+        <bpmn:flowNodeRef>candidate-passed</bpmn:flowNodeRef>
+        <bpmn:flowNodeRef>stop-test</bpmn:flowNodeRef>
+        <bpmn:flowNodeRef>deploy</bpmn:flowNodeRef>
+        <bpmn:flowNodeRef>deploy-passed</bpmn:flowNodeRef>
+        <bpmn:flowNodeRef>stop-deploy</bpmn:flowNodeRef>
+        <bpmn:flowNodeRef>verified</bpmn:flowNodeRef>
+      </bpmn:lane>
+      <bpmn:lane id="lane-operator" name="Operator">
+        <bpmn:flowNodeRef>decide</bpmn:flowNodeRef>
+        <bpmn:flowNodeRef>decision-result</bpmn:flowNodeRef>
+        <bpmn:flowNodeRef>revision-limit</bpmn:flowNodeRef>
+      </bpmn:lane>
+    </bpmn:laneSet>
+    <bpmn:startEvent id="start" name="Start">
+      <bpmn:outgoing>flow-1</bpmn:outgoing>
+    </bpmn:startEvent>
+    <bpmn:parallelGateway id="fork" name="Start independent steps" gatewayDirection="Diverging">
+      <bpmn:incoming>flow-1</bpmn:incoming>
+      <bpmn:outgoing>flow-2</bpmn:outgoing>
+      <bpmn:outgoing>flow-3</bpmn:outgoing>
+      <bpmn:outgoing>flow-4</bpmn:outgoing>
+    </bpmn:parallelGateway>
+    <bpmn:serviceTask id="research-code" name="Research the code and test">
+      <bpmn:incoming>flow-2</bpmn:incoming>
+      <bpmn:outgoing>flow-5</bpmn:outgoing>
+    </bpmn:serviceTask>
+    <bpmn:serviceTask id="research-rules" name="Research acceptance rules">
+      <bpmn:incoming>flow-3</bpmn:incoming>
+      <bpmn:outgoing>flow-6</bpmn:outgoing>
+    </bpmn:serviceTask>
+    <bpmn:scriptTask id="reproduce" name="Reproduce with the original test">
+      <bpmn:incoming>flow-4</bpmn:incoming>
+      <bpmn:outgoing>flow-7</bpmn:outgoing>
+    </bpmn:scriptTask>
+    <bpmn:parallelGateway id="join" name="Wait for three results" gatewayDirection="Converging">
+      <bpmn:incoming>flow-5</bpmn:incoming>
+      <bpmn:incoming>flow-6</bpmn:incoming>
+      <bpmn:incoming>flow-7</bpmn:incoming>
+      <bpmn:outgoing>flow-8</bpmn:outgoing>
+    </bpmn:parallelGateway>
+    <bpmn:exclusiveGateway id="plan-entry" name="Start or revise the plan" gatewayDirection="Converging">
+      <bpmn:incoming>flow-8</bpmn:incoming>
+      <bpmn:incoming>flow-14</bpmn:incoming>
+      <bpmn:outgoing>flow-9</bpmn:outgoing>
+    </bpmn:exclusiveGateway>
+    <bpmn:serviceTask id="plan" name="Write a plan from both reports">
+      <bpmn:incoming>flow-9</bpmn:incoming>
+      <bpmn:outgoing>flow-10</bpmn:outgoing>
+    </bpmn:serviceTask>
+    <bpmn:scriptTask id="prepare-plan-review" name="Record the plan version to review">
+      <bpmn:incoming>flow-10</bpmn:incoming>
+      <bpmn:outgoing>flow-11</bpmn:outgoing>
+    </bpmn:scriptTask>
+    <bpmn:serviceTask id="review-plan" name="Review the plan independently">
+      <bpmn:incoming>flow-11</bpmn:incoming>
+      <bpmn:outgoing>flow-12</bpmn:outgoing>
+    </bpmn:serviceTask>
+    <bpmn:userTask id="decide" name="Decide after the plan review">
+      <bpmn:incoming>flow-12</bpmn:incoming>
+      <bpmn:outgoing>flow-13</bpmn:outgoing>
+    </bpmn:userTask>
+    <bpmn:exclusiveGateway id="decision-result" name="Operator decision" gatewayDirection="Diverging">
+      <bpmn:incoming>flow-13</bpmn:incoming>
+      <bpmn:outgoing>flow-14</bpmn:outgoing>
+      <bpmn:outgoing>flow-15</bpmn:outgoing>
+      <bpmn:outgoing>flow-16</bpmn:outgoing>
+    </bpmn:exclusiveGateway>
+    <bpmn:endEvent id="revision-limit" name="Revision limit reached">
+      <bpmn:incoming>flow-16</bpmn:incoming>
+    </bpmn:endEvent>
+    <bpmn:scriptTask id="verify-plan" name="Check the plan verdict and digest">
+      <bpmn:incoming>flow-15</bpmn:incoming>
+      <bpmn:outgoing>flow-17</bpmn:outgoing>
+    </bpmn:scriptTask>
+    <bpmn:exclusiveGateway id="plan-passed" name="Plan and repository state valid?" gatewayDirection="Diverging">
+      <bpmn:incoming>flow-17</bpmn:incoming>
+      <bpmn:outgoing>flow-18</bpmn:outgoing>
+      <bpmn:outgoing>flow-19</bpmn:outgoing>
+    </bpmn:exclusiveGateway>
+    <bpmn:endEvent id="stop-plan" name="Stop">
+      <bpmn:incoming>flow-19</bpmn:incoming>
+    </bpmn:endEvent>
+    <bpmn:serviceTask id="fix" name="Apply the approved fix">
+      <bpmn:incoming>flow-18</bpmn:incoming>
+      <bpmn:outgoing>flow-20</bpmn:outgoing>
+    </bpmn:serviceTask>
+    <bpmn:scriptTask id="verify-candidate" name="Rerun the test and record the candidate">
+      <bpmn:incoming>flow-20</bpmn:incoming>
+      <bpmn:outgoing>flow-21</bpmn:outgoing>
+    </bpmn:scriptTask>
+    <bpmn:exclusiveGateway id="candidate-passed" name="Test and diff valid?" gatewayDirection="Diverging">
+      <bpmn:incoming>flow-21</bpmn:incoming>
+      <bpmn:outgoing>flow-22</bpmn:outgoing>
+      <bpmn:outgoing>flow-23</bpmn:outgoing>
+    </bpmn:exclusiveGateway>
+    <bpmn:endEvent id="stop-test" name="Stop">
+      <bpmn:incoming>flow-23</bpmn:incoming>
+    </bpmn:endEvent>
+    <bpmn:serviceTask id="review-deploy" name="Review the candidate before deployment">
+      <bpmn:incoming>flow-22</bpmn:incoming>
+      <bpmn:outgoing>flow-24</bpmn:outgoing>
+    </bpmn:serviceTask>
+    <bpmn:scriptTask id="deploy" name="Verify the verdict and run the deployed copy">
+      <bpmn:incoming>flow-24</bpmn:incoming>
+      <bpmn:outgoing>flow-25</bpmn:outgoing>
+    </bpmn:scriptTask>
+    <bpmn:exclusiveGateway id="deploy-passed" name="Did the deployed copy pass its check?" gatewayDirection="Diverging">
+      <bpmn:incoming>flow-25</bpmn:incoming>
+      <bpmn:outgoing>flow-26</bpmn:outgoing>
+      <bpmn:outgoing>flow-27</bpmn:outgoing>
+    </bpmn:exclusiveGateway>
+    <bpmn:endEvent id="stop-deploy" name="Stop">
+      <bpmn:incoming>flow-26</bpmn:incoming>
+    </bpmn:endEvent>
+    <bpmn:endEvent id="verified" name="Deployment verified">
+      <bpmn:incoming>flow-27</bpmn:incoming>
+    </bpmn:endEvent>
+    <bpmn:sequenceFlow id="flow-1" sourceRef="start" targetRef="fork" />
+    <bpmn:sequenceFlow id="flow-2" sourceRef="fork" targetRef="research-code" />
+    <bpmn:sequenceFlow id="flow-3" sourceRef="fork" targetRef="research-rules" />
+    <bpmn:sequenceFlow id="flow-4" sourceRef="fork" targetRef="reproduce" />
+    <bpmn:sequenceFlow id="flow-5" sourceRef="research-code" targetRef="join" />
+    <bpmn:sequenceFlow id="flow-6" sourceRef="research-rules" targetRef="join" />
+    <bpmn:sequenceFlow id="flow-7" sourceRef="reproduce" targetRef="join" />
+    <bpmn:sequenceFlow id="flow-8" sourceRef="join" targetRef="plan-entry" />
+    <bpmn:sequenceFlow id="flow-9" sourceRef="plan-entry" targetRef="plan" />
+    <bpmn:sequenceFlow id="flow-10" sourceRef="plan" targetRef="prepare-plan-review" />
+    <bpmn:sequenceFlow id="flow-11" sourceRef="prepare-plan-review" targetRef="review-plan" />
+    <bpmn:sequenceFlow id="flow-12" sourceRef="review-plan" targetRef="decide" />
+    <bpmn:sequenceFlow id="flow-13" sourceRef="decide" targetRef="decision-result" />
+    <bpmn:sequenceFlow id="flow-14" sourceRef="decision-result" targetRef="plan-entry" name="Revise · max 2 loops">
+      <bpmn:conditionExpression xsi:type="bpmn:tFormalExpression">Revise with fewer than two revisions</bpmn:conditionExpression>
+    </bpmn:sequenceFlow>
+    <bpmn:sequenceFlow id="flow-15" sourceRef="decision-result" targetRef="verify-plan" name="OK">
+      <bpmn:conditionExpression xsi:type="bpmn:tFormalExpression">OK</bpmn:conditionExpression>
+    </bpmn:sequenceFlow>
+    <bpmn:sequenceFlow id="flow-16" sourceRef="decision-result" targetRef="revision-limit" name="Revise at the limit">
+      <bpmn:conditionExpression xsi:type="bpmn:tFormalExpression">Revise after two revisions</bpmn:conditionExpression>
+    </bpmn:sequenceFlow>
+    <bpmn:sequenceFlow id="flow-17" sourceRef="verify-plan" targetRef="plan-passed" />
+    <bpmn:sequenceFlow id="flow-18" sourceRef="plan-passed" targetRef="fix" name="PASS · matching digest">
+      <bpmn:conditionExpression xsi:type="bpmn:tFormalExpression">PASS with matching plan digest and repository state</bpmn:conditionExpression>
+    </bpmn:sequenceFlow>
+    <bpmn:sequenceFlow id="flow-19" sourceRef="plan-passed" targetRef="stop-plan" name="Failed">
+      <bpmn:conditionExpression xsi:type="bpmn:tFormalExpression">BLOCK, missing report, or changed repository state</bpmn:conditionExpression>
+    </bpmn:sequenceFlow>
+    <bpmn:sequenceFlow id="flow-20" sourceRef="fix" targetRef="verify-candidate" />
+    <bpmn:sequenceFlow id="flow-21" sourceRef="verify-candidate" targetRef="candidate-passed" />
+    <bpmn:sequenceFlow id="flow-22" sourceRef="candidate-passed" targetRef="review-deploy" name="Test and diff passed">
+      <bpmn:conditionExpression xsi:type="bpmn:tFormalExpression">The test and diff scope pass</bpmn:conditionExpression>
+    </bpmn:sequenceFlow>
+    <bpmn:sequenceFlow id="flow-23" sourceRef="candidate-passed" targetRef="stop-test" name="Failed">
+      <bpmn:conditionExpression xsi:type="bpmn:tFormalExpression">The test or diff scope fails</bpmn:conditionExpression>
+    </bpmn:sequenceFlow>
+    <bpmn:sequenceFlow id="flow-24" sourceRef="review-deploy" targetRef="deploy" />
+    <bpmn:sequenceFlow id="flow-25" sourceRef="deploy" targetRef="deploy-passed" />
+    <bpmn:sequenceFlow id="flow-26" sourceRef="deploy-passed" targetRef="stop-deploy" name="Failed">
+      <bpmn:conditionExpression xsi:type="bpmn:tFormalExpression">Missing matching PASS, deployment failure, or probe failure</bpmn:conditionExpression>
+    </bpmn:sequenceFlow>
+    <bpmn:sequenceFlow id="flow-27" sourceRef="deploy-passed" targetRef="verified" name="Probe returned 120">
+      <bpmn:conditionExpression xsi:type="bpmn:tFormalExpression">Matching PASS and the deployed copy returns 120</bpmn:conditionExpression>
+    </bpmn:sequenceFlow>
+  </bpmn:process>
+  <bpmndi:BPMNDiagram id="AASDLCV2Diagram">
+    <bpmndi:BPMNPlane id="AASDLCV2Plane" bpmnElement="AASDLCV2">
+      <bpmndi:BPMNShape id="di-lane-agents" bpmnElement="lane-agents" isHorizontal="false">
+        <dc:Bounds x="14" y="10" width="368" height="1633" />
+      </bpmndi:BPMNShape>
+      <bpmndi:BPMNShape id="di-lane-playbooks" bpmnElement="lane-playbooks" isHorizontal="false">
+        <dc:Bounds x="382" y="10" width="332" height="1633" />
+      </bpmndi:BPMNShape>
+      <bpmndi:BPMNShape id="di-lane-operator" bpmnElement="lane-operator" isHorizontal="false">
+        <dc:Bounds x="714" y="10" width="220" height="1633" />
+      </bpmndi:BPMNShape>
+      <bpmndi:BPMNShape id="di-start" bpmnElement="start">
+        <dc:Bounds x="533" y="42" width="30" height="30" />
+        <bpmndi:BPMNLabel>
+          <dc:Bounds x="490" y="77" width="116" height="35" />
+        </bpmndi:BPMNLabel>
+      </bpmndi:BPMNShape>
+      <bpmndi:BPMNShape id="di-fork" bpmnElement="fork">
+        <dc:Bounds x="527" y="106" width="42" height="42" />
+      </bpmndi:BPMNShape>
+      <bpmndi:BPMNShape id="di-research-code" bpmnElement="research-code">
+        <dc:Bounds x="38" y="197" width="144" height="62" />
+      </bpmndi:BPMNShape>
+      <bpmndi:BPMNShape id="di-research-rules" bpmnElement="research-rules">
+        <dc:Bounds x="203" y="197" width="156" height="62" />
+      </bpmndi:BPMNShape>
+      <bpmndi:BPMNShape id="di-reproduce" bpmnElement="reproduce">
+        <dc:Bounds x="466" y="197" width="164" height="62" />
+      </bpmndi:BPMNShape>
+      <bpmndi:BPMNShape id="di-join" bpmnElement="join">
+        <dc:Bounds x="527" y="327" width="42" height="42" />
+      </bpmndi:BPMNShape>
+      <bpmndi:BPMNShape id="di-plan-entry" bpmnElement="plan-entry" isMarkerVisible="true">
+        <dc:Bounds x="261" y="328" width="40" height="40" />
+      </bpmndi:BPMNShape>
+      <bpmndi:BPMNShape id="di-plan" bpmnElement="plan">
+        <dc:Bounds x="199" y="405" width="164" height="64" />
+      </bpmndi:BPMNShape>
+      <bpmndi:BPMNShape id="di-prepare-plan-review" bpmnElement="prepare-plan-review">
+        <dc:Bounds x="461" y="488" width="174" height="64" />
+      </bpmndi:BPMNShape>
+      <bpmndi:BPMNShape id="di-review-plan" bpmnElement="review-plan">
+        <dc:Bounds x="199" y="574" width="164" height="64" />
+      </bpmndi:BPMNShape>
+      <bpmndi:BPMNShape id="di-decide" bpmnElement="decide">
+        <dc:Bounds x="729" y="618" width="174" height="64" />
+      </bpmndi:BPMNShape>
+      <bpmndi:BPMNShape id="di-decision-result" bpmnElement="decision-result" isMarkerVisible="true">
+        <dc:Bounds x="793" y="731" width="46" height="46" />
+      </bpmndi:BPMNShape>
+      <bpmndi:BPMNShape id="di-revision-limit" bpmnElement="revision-limit">
+        <dc:Bounds x="858" y="843" width="32" height="32" />
+        <bpmndi:BPMNLabel>
+          <dc:Bounds x="816" y="880" width="116" height="35" />
+        </bpmndi:BPMNLabel>
+      </bpmndi:BPMNShape>
+      <bpmndi:BPMNShape id="di-verify-plan" bpmnElement="verify-plan">
+        <dc:Bounds x="461" y="829" width="174" height="64" />
+      </bpmndi:BPMNShape>
+      <bpmndi:BPMNShape id="di-plan-passed" bpmnElement="plan-passed" isMarkerVisible="true">
+        <dc:Bounds x="527" y="937" width="42" height="42" />
+      </bpmndi:BPMNShape>
+      <bpmndi:BPMNShape id="di-stop-plan" bpmnElement="stop-plan">
+        <dc:Bounds x="664" y="942" width="32" height="32" />
+        <bpmndi:BPMNLabel>
+          <dc:Bounds x="622" y="979" width="116" height="35" />
+        </bpmndi:BPMNLabel>
+      </bpmndi:BPMNShape>
+      <bpmndi:BPMNShape id="di-fix" bpmnElement="fix">
+        <dc:Bounds x="199" y="1014" width="164" height="64" />
+      </bpmndi:BPMNShape>
+      <bpmndi:BPMNShape id="di-verify-candidate" bpmnElement="verify-candidate">
+        <dc:Bounds x="457.5" y="1099" width="181" height="64" />
+      </bpmndi:BPMNShape>
+      <bpmndi:BPMNShape id="di-candidate-passed" bpmnElement="candidate-passed" isMarkerVisible="true">
+        <dc:Bounds x="527" y="1195" width="42" height="42" />
+      </bpmndi:BPMNShape>
+      <bpmndi:BPMNShape id="di-stop-test" bpmnElement="stop-test">
+        <dc:Bounds x="664" y="1200" width="32" height="32" />
+        <bpmndi:BPMNLabel>
+          <dc:Bounds x="622" y="1237" width="116" height="35" />
+        </bpmndi:BPMNLabel>
+      </bpmndi:BPMNShape>
+      <bpmndi:BPMNShape id="di-review-deploy" bpmnElement="review-deploy">
+        <dc:Bounds x="192" y="1261" width="178" height="64" />
+      </bpmndi:BPMNShape>
+      <bpmndi:BPMNShape id="di-deploy" bpmnElement="deploy">
+        <dc:Bounds x="446.5" y="1345" width="203" height="70" />
+      </bpmndi:BPMNShape>
+      <bpmndi:BPMNShape id="di-deploy-passed" bpmnElement="deploy-passed" isMarkerVisible="true">
+        <dc:Bounds x="527" y="1456" width="42" height="42" />
+      </bpmndi:BPMNShape>
+      <bpmndi:BPMNShape id="di-stop-deploy" bpmnElement="stop-deploy">
+        <dc:Bounds x="664" y="1461" width="32" height="32" />
+        <bpmndi:BPMNLabel>
+          <dc:Bounds x="622" y="1498" width="116" height="35" />
+        </bpmndi:BPMNLabel>
+      </bpmndi:BPMNShape>
+      <bpmndi:BPMNShape id="di-verified" bpmnElement="verified">
+        <dc:Bounds x="532" y="1551" width="32" height="32" />
+        <bpmndi:BPMNLabel>
+          <dc:Bounds x="490" y="1588" width="116" height="35" />
+        </bpmndi:BPMNLabel>
+      </bpmndi:BPMNShape>
+      <bpmndi:BPMNEdge id="di-flow-1" bpmnElement="flow-1">
+        <di:waypoint x="548" y="72" />
+        <di:waypoint x="548" y="106" />
+      </bpmndi:BPMNEdge>
+      <bpmndi:BPMNEdge id="di-flow-2" bpmnElement="flow-2">
+        <di:waypoint x="527" y="127" />
+        <di:waypoint x="110" y="127" />
+        <di:waypoint x="110" y="197" />
+      </bpmndi:BPMNEdge>
+      <bpmndi:BPMNEdge id="di-flow-3" bpmnElement="flow-3">
+        <di:waypoint x="548" y="148" />
+        <di:waypoint x="548" y="166" />
+        <di:waypoint x="281" y="166" />
+        <di:waypoint x="281" y="197" />
+      </bpmndi:BPMNEdge>
+      <bpmndi:BPMNEdge id="di-flow-4" bpmnElement="flow-4">
+        <di:waypoint x="569" y="127" />
+        <di:waypoint x="626" y="127" />
+        <di:waypoint x="626" y="181" />
+        <di:waypoint x="548" y="181" />
+        <di:waypoint x="548" y="197" />
+      </bpmndi:BPMNEdge>
+      <bpmndi:BPMNEdge id="di-flow-5" bpmnElement="flow-5">
+        <di:waypoint x="110" y="259" />
+        <di:waypoint x="110" y="326" />
+        <di:waypoint x="512" y="326" />
+        <di:waypoint x="512" y="348" />
+        <di:waypoint x="527" y="348" />
+      </bpmndi:BPMNEdge>
+      <bpmndi:BPMNEdge id="di-flow-6" bpmnElement="flow-6">
+        <di:waypoint x="281" y="259" />
+        <di:waypoint x="281" y="310" />
+        <di:waypoint x="548" y="310" />
+        <di:waypoint x="548" y="327" />
+      </bpmndi:BPMNEdge>
+      <bpmndi:BPMNEdge id="di-flow-7" bpmnElement="flow-7">
+        <di:waypoint x="548" y="259" />
+        <di:waypoint x="548" y="281" />
+        <di:waypoint x="619" y="281" />
+        <di:waypoint x="619" y="348" />
+        <di:waypoint x="569" y="348" />
+      </bpmndi:BPMNEdge>
+      <bpmndi:BPMNEdge id="di-flow-8" bpmnElement="flow-8">
+        <di:waypoint x="548" y="369" />
+        <di:waypoint x="548" y="390" />
+        <di:waypoint x="345" y="390" />
+        <di:waypoint x="345" y="348" />
+        <di:waypoint x="301" y="348" />
+      </bpmndi:BPMNEdge>
+      <bpmndi:BPMNEdge id="di-flow-9" bpmnElement="flow-9">
+        <di:waypoint x="281" y="368" />
+        <di:waypoint x="281" y="405" />
+      </bpmndi:BPMNEdge>
+      <bpmndi:BPMNEdge id="di-flow-10" bpmnElement="flow-10">
+        <di:waypoint x="363" y="437" />
+        <di:waypoint x="548" y="437" />
+        <di:waypoint x="548" y="488" />
+      </bpmndi:BPMNEdge>
+      <bpmndi:BPMNEdge id="di-flow-11" bpmnElement="flow-11">
+        <di:waypoint x="548" y="552" />
+        <di:waypoint x="548" y="564" />
+        <di:waypoint x="281" y="564" />
+        <di:waypoint x="281" y="574" />
+      </bpmndi:BPMNEdge>
+      <bpmndi:BPMNEdge id="di-flow-12" bpmnElement="flow-12">
+        <di:waypoint x="363" y="606" />
+        <di:waypoint x="816" y="606" />
+        <di:waypoint x="816" y="618" />
+      </bpmndi:BPMNEdge>
+      <bpmndi:BPMNEdge id="di-flow-13" bpmnElement="flow-13">
+        <di:waypoint x="816" y="682" />
+        <di:waypoint x="816" y="731" />
+      </bpmndi:BPMNEdge>
+      <bpmndi:BPMNEdge id="di-flow-14" bpmnElement="flow-14">
+        <di:waypoint x="793" y="754" />
+        <di:waypoint x="58" y="754" />
+        <di:waypoint x="58" y="365" />
+        <di:waypoint x="245" y="365" />
+        <di:waypoint x="245" y="348" />
+        <di:waypoint x="261" y="348" />
+        <bpmndi:BPMNLabel>
+          <dc:Bounds x="47" y="726" width="120" height="24" />
+        </bpmndi:BPMNLabel>
+      </bpmndi:BPMNEdge>
+      <bpmndi:BPMNEdge id="di-flow-15" bpmnElement="flow-15">
+        <di:waypoint x="816" y="777" />
+        <di:waypoint x="816" y="808" />
+        <di:waypoint x="548" y="808" />
+        <di:waypoint x="548" y="829" />
+        <bpmndi:BPMNLabel>
+          <dc:Bounds x="622" y="781" width="120" height="24" />
+        </bpmndi:BPMNLabel>
+      </bpmndi:BPMNEdge>
+      <bpmndi:BPMNEdge id="di-flow-16" bpmnElement="flow-16">
+        <di:waypoint x="839" y="754" />
+        <di:waypoint x="874" y="754" />
+        <di:waypoint x="874" y="843" />
+        <bpmndi:BPMNLabel>
+          <dc:Bounds x="842" y="778" width="120" height="24" />
+        </bpmndi:BPMNLabel>
+      </bpmndi:BPMNEdge>
+      <bpmndi:BPMNEdge id="di-flow-17" bpmnElement="flow-17">
+        <di:waypoint x="548" y="893" />
+        <di:waypoint x="548" y="937" />
+      </bpmndi:BPMNEdge>
+      <bpmndi:BPMNEdge id="di-flow-18" bpmnElement="flow-18">
+        <di:waypoint x="527" y="958" />
+        <di:waypoint x="281" y="958" />
+        <di:waypoint x="281" y="1014" />
+        <bpmndi:BPMNLabel>
+          <dc:Bounds x="373" y="929" width="120" height="24" />
+        </bpmndi:BPMNLabel>
+      </bpmndi:BPMNEdge>
+      <bpmndi:BPMNEdge id="di-flow-19" bpmnElement="flow-19">
+        <di:waypoint x="569" y="958" />
+        <di:waypoint x="664" y="958" />
+        <bpmndi:BPMNLabel>
+          <dc:Bounds x="551" y="933" width="120" height="24" />
+        </bpmndi:BPMNLabel>
+      </bpmndi:BPMNEdge>
+      <bpmndi:BPMNEdge id="di-flow-20" bpmnElement="flow-20">
+        <di:waypoint x="363" y="1046" />
+        <di:waypoint x="548" y="1046" />
+        <di:waypoint x="548" y="1099" />
+      </bpmndi:BPMNEdge>
+      <bpmndi:BPMNEdge id="di-flow-21" bpmnElement="flow-21">
+        <di:waypoint x="548" y="1163" />
+        <di:waypoint x="548" y="1195" />
+      </bpmndi:BPMNEdge>
+      <bpmndi:BPMNEdge id="di-flow-22" bpmnElement="flow-22">
+        <di:waypoint x="527" y="1216" />
+        <di:waypoint x="281" y="1216" />
+        <di:waypoint x="281" y="1261" />
+        <bpmndi:BPMNLabel>
+          <dc:Bounds x="367" y="1187" width="120" height="24" />
+        </bpmndi:BPMNLabel>
+      </bpmndi:BPMNEdge>
+      <bpmndi:BPMNEdge id="di-flow-23" bpmnElement="flow-23">
+        <di:waypoint x="569" y="1216" />
+        <di:waypoint x="664" y="1216" />
+        <bpmndi:BPMNLabel>
+          <dc:Bounds x="551" y="1191" width="120" height="24" />
+        </bpmndi:BPMNLabel>
+      </bpmndi:BPMNEdge>
+      <bpmndi:BPMNEdge id="di-flow-24" bpmnElement="flow-24">
+        <di:waypoint x="370" y="1293" />
+        <di:waypoint x="548" y="1293" />
+        <di:waypoint x="548" y="1345" />
+      </bpmndi:BPMNEdge>
+      <bpmndi:BPMNEdge id="di-flow-25" bpmnElement="flow-25">
+        <di:waypoint x="548" y="1415" />
+        <di:waypoint x="548" y="1456" />
+      </bpmndi:BPMNEdge>
+      <bpmndi:BPMNEdge id="di-flow-26" bpmnElement="flow-26">
+        <di:waypoint x="569" y="1477" />
+        <di:waypoint x="664" y="1477" />
+        <bpmndi:BPMNLabel>
+          <dc:Bounds x="551" y="1452" width="120" height="24" />
+        </bpmndi:BPMNLabel>
+      </bpmndi:BPMNEdge>
+      <bpmndi:BPMNEdge id="di-flow-27" bpmnElement="flow-27">
+        <di:waypoint x="548" y="1498" />
+        <di:waypoint x="548" y="1551" />
+        <bpmndi:BPMNLabel>
+          <dc:Bounds x="560" y="1512" width="120" height="24" />
+        </bpmndi:BPMNLabel>
+      </bpmndi:BPMNEdge>
+    </bpmndi:BPMNPlane>
+  </bpmndi:BPMNDiagram>
+</bpmn:definitions>
