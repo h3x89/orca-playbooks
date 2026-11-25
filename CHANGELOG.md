@@ -1,5 +1,13 @@
 # Changelog
 
+## 0.5.5
+
+- Select a step in Graph, Timeline or Agents for a preview and a link to its details. Open its script,
+  result file or decision in Orca when available.
+- **Open chat** jumps to an existing native agent tab, including the exact Timeline attempt after
+  **Revise**. The option is off by default and uses a temporary adapter for Orca 1.4.274 on Linux.
+- Graph titles wrap, and the Open chat action moves below the Timeline row in a narrow panel.
+
 ## 0.5.4
 
 - **Workspace** opens first. **Needs you** and **Catalog** show open decisions and saved playbooks

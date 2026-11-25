@@ -51,6 +51,10 @@ const ok = (result) => {
 }
 
 const [group, command] = args
+if (group === 'status') {
+  ok({ runtime: { appVersion: process.env.FAKE_ORCA_HOST_VERSION }, app: { desktopWindowStatus: 'available' } })
+  process.exit(0)
+}
 if (group === 'worktree' && command === 'ps') {
   ok({ worktrees: state.worktrees, totalCount: state.worktrees.length, truncated: false })
   process.exit(0)
