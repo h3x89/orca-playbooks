@@ -60,13 +60,15 @@ function setup() {
     FAKE_ORCA_FAIL_WORKER: '',
     FAKE_ORCA_REPORTS: '',
     FAKE_ORCA_SLOW_RUN_LIST_MS: '',
-    FAKE_ORCA_FAIL_RUN_LIST: ''
+    FAKE_ORCA_FAIL_RUN_LIST: '',
+    FAKE_ORCA_HOST_VERSION: ''
   })
   const other = path.join(dir, 'other')
   mkdirSync(other)
   const world = {
     focus: { workspaceId: 'repo1::' + workspace, branch: 'main', displayName: 'demo', terminals: [] } as Record<string, unknown> | null,
     localJournalPath: '',
+    experimentalOpenChat: false,
     agents: [] as { terminalId: string | null; title: string | null; agent: string | null; state: string; stateStartedAt: number; task?: { title: string } | null }[]
   }
   const host = mockHost({
@@ -77,7 +79,7 @@ function setup() {
       ], truncated: false },
       'workspace.readContext': () => world.focus,
       'agents.list': () => ({ agents: world.agents }),
-      'settings.get': () => ({ settings: { localJournalPath: world.localJournalPath } }),
+      'settings.get': () => ({ settings: { localJournalPath: world.localJournalPath, experimentalOpenChat: world.experimentalOpenChat } }),
       'terminal.create': { terminalId: 'term_coord' },
       'terminal.focus': { focused: true },
       'workspace.open': { opened: true },
@@ -126,6 +128,62 @@ test('{{now}} and {{date}} are in the system time zone', () => {
 test('scriptOutput takes the outputs line, else plain stdout', () => {
   assert.equal(scriptOutput('noise\n{"outputs": {"a": "x", "b": "y"}}\n'), 'x\n\ny')
   assert.equal(scriptOutput('just text\n'), 'just text')
+})
+
+test('chat navigation is opt-in and refuses an untested Orca version', async () => {
+  const { host, world } = setup()
+  const mounted = await mountWorker(worker, { host })
+  const input = { runId: 'run_fixture', taskId: 'task_fixture' }
+  await assert.rejects(mounted.request('step.openChat', input), /experimental chat navigation is off/i)
+  assert.ok(!existsSync(process.env.FAKE_ORCA_LOG!) || calls().every((call) => call[0] !== 'status'))
+
+  world.experimentalOpenChat = true
+  process.env.FAKE_ORCA_HOST_VERSION = '1.4.275'
+  await assert.rejects(mounted.request('step.openChat', input), /requires desktop Orca 1.4.274 on Linux/)
+  if (process.platform === 'linux') assert.ok(calls().some((call) => call[0] === 'status'))
+})
+
+test('keeps each script attempt output and marks older missing output as unavailable', async () => {
+  const { workspace, host } = setup()
+  const dir = path.join(workspace, '.orca', 'playbooks')
+  writeFileSync(path.join(dir, 'script-revise.yaml'), `
+title: Script revision
+steps:
+  - id: summary
+    script: { run: summary.sh }
+  - id: decision
+    needs: [summary]
+    gate: { question: Approve? }
+    on:
+      revise: { goto: summary, max_loops: 1 }
+`)
+  writeFileSync(path.join(dir, 'scripts', 'summary.sh'), 'if test -f summary.txt; then echo "SECOND output"; else echo "FIRST output"; fi\n')
+  const mounted = await mountWorker(worker, { host })
+  const { workspaceId } = await mounted.request('state.get', {})
+  const { run } = await mounted.request('run.start', { workspaceId: workspaceId!, file: 'script-revise.yaml' })
+  const read = async () => (await mounted.request('state.get', {})).runs.find((item) => item.id === run.id)!
+  const first = await until(read, (item) => item.status === 'waiting')
+  assert.equal(first.tasks.summary.output, 'FIRST output')
+  const firstTaskId = first.tasks.summary.taskId
+
+  await mounted.request('gate.resolve', { runId: run.id, stepId: 'decision', choice: 'revise', comment: 'Try again' })
+  const next = await until(read, (item) => item.status === 'waiting' && item.tasks.summary.attempt === 2)
+  assert.equal(next.tasks.summary.output, 'SECOND output')
+  assert.equal(readFileSync(path.join(run.runDir, 'summary.txt'), 'utf8'), 'SECOND output')
+
+  await mounted.deactivate()
+  const reloaded = await mountWorker(worker, { host })
+  const history = async () => (await reloaded.request('run.timeline', { runId: run.id })).history?.find((item) => item.id === firstTaskId)
+  const recorded = await history()
+  assert.equal(recorded?.result, 'FIRST output')
+  assert.equal(recorded?.resultUnavailable, undefined)
+
+  // A pre-upgrade run keeps Orca task metadata but has no per-attempt file.
+  rmSync(path.join(run.runDir, `.script-output-${firstTaskId}.txt`))
+  const unavailable = await history()
+  assert.equal(unavailable?.result, undefined)
+  assert.equal(unavailable?.resultUnavailable, true)
+  await reloaded.deactivate()
 })
 
 test('runs scripts, the agent and the gate, loops on revise and finishes on an OK from the CLI', async () => {

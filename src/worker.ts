@@ -6,14 +6,15 @@
 // Pattern of calling `orca orchestration` from a plugin worker after Agent Pipeline (MIT, Alexander-64).
 import type { OrcaWorkerApi } from 'orca/worker'
 import { execFile } from 'node:child_process'
-import { existsSync } from 'node:fs'
-import { mkdir, readdir, readFile, stat, writeFile } from 'node:fs/promises'
+import { constants, existsSync } from 'node:fs'
+import { mkdir, open, readdir, readFile, realpath, stat, writeFile } from 'node:fs/promises'
 import path from 'node:path'
-import { buildRunGraph, launchOf, workerActive, workspacePath, type CliTask, type CliWorker } from './orcaRuns'
+import { buildRunGraph, launchOf, resultFields, workerActive, workspacePath, type CliTask, type CliWorker } from './orcaRuns'
 import { localFirstPrompts } from './firstPrompt'
+import { focusExistingNativeChat, NATIVE_CHAT_ORCA_VERSION } from './nativeChat'
 import { buildTimeline, parseTime, type CliGate, type CliMessage, type DispatchTimes } from './timeline'
 import { depths, loopSteps, parsePlaybook, renderPrompt, resolveInputs, topologicalOrder, type GateStep, type Playbook, type ScriptStep, type Step } from './playbook'
-import type { AgentLive, CatalogEntry, RunNode, OrcaRunSummary, PlaybookInfo, RunInfo, SessionAgent, SessionChild, SessionInfo, StepInfo, StepRun, TimelineEvent, WorkspaceInfo } from './protocol'
+import type { AgentLive, CatalogEntry, RunNode, OrcaRunSummary, PlaybookInfo, RunInfo, SessionAgent, SessionChild, SessionInfo, StepInfo, StepRun, TimelineEvent, TimelineStep, WorkspaceInfo } from './protocol'
 
 const RUNS_KEY = 'runs.v2'
 const MAX_RUNS = 20
@@ -75,6 +76,33 @@ export function sessionsOf(row: { agents?: Record<string, unknown>[] } | undefin
   })
 }
 const OUTPUT_CHARS = 4000
+
+function outputPreview(content: string): string {
+  return content.length > OUTPUT_CHARS ? `${content.slice(0, OUTPUT_CHARS)}\n…` : content
+}
+
+function scriptAttemptFile(runDir: string, taskId: string): string | undefined {
+  if (!/^task_[A-Za-z0-9]+$/.test(taskId)) return undefined
+  return path.join(runDir, `.script-output-${taskId}.txt`)
+}
+
+async function readScriptAttempt(runDir: string, taskId: string): Promise<string | undefined> {
+  const file = scriptAttemptFile(runDir, taskId)
+  if (!file) return undefined
+  try {
+    const handle = await open(file, constants.O_RDONLY | constants.O_NOFOLLOW | constants.O_NONBLOCK)
+    try {
+      const info = await handle.stat()
+      if (!info.isFile() || info.size > (OUTPUT_CHARS + 2) * 4) return undefined
+      return await handle.readFile('utf8')
+    } finally {
+      await handle.close()
+    }
+  } catch {
+    return undefined
+  }
+}
+
 const PLAYBOOK_DIR = path.join('.orca', 'playbooks')
 const RUNS_DIR = path.join('.orca', 'runs')
 const INDEX_RUNS = 60
@@ -272,6 +300,7 @@ export default function activate(orca: OrcaWorkerApi): void {
   const origins = new Map<string, DispatchTimes>()
   /** Dispatch times per finished dispatch (they no longer change). */
   const dispatchTimes = new Map<string, DispatchTimes>()
+  const chatSessionsByDispatch = new Map<string, string>()
   function rememberWorkerSession(dispatchId: string, sessionId: string | undefined): void {
     if (!sessionId) return
     assignees.add(sessionId)
@@ -286,6 +315,7 @@ export default function activate(orca: OrcaWorkerApi): void {
     const dispatch = ((shown ?? {}) as { dispatch?: Record<string, unknown> }).dispatch ?? {}
     const pane = field(shown, 'dispatch', 'assigneePaneKey') ?? field(shown, 'dispatch', 'assignee_pane_key')
     const paneSession = pane?.match(/^structured-agent-session-([0-9a-f]{8}(?:-[0-9a-f]{4}){3}-[0-9a-f]{12}):/i)?.[1]
+    if (paneSession) chatSessionsByDispatch.set(id, paneSession)
     rememberWorkerSession(id, field(shown, 'dispatch', 'assigneeOrcaSessionId') ?? field(shown, 'dispatch', 'assignee_orca_session_id') ?? paneSession)
     const times: DispatchTimes = { ...launchOf(shown) }
     const dispatched = parseTime(dispatch.dispatchedAt ?? dispatch.dispatched_at)
@@ -296,6 +326,19 @@ export default function activate(orca: OrcaWorkerApi): void {
     if (followUpOf) times.followUpOf = followUpOf
     if (shown !== undefined && times.completedAt !== undefined) dispatchTimes.set(id, times)
     return times
+  }
+
+  async function nativeChatRuntime(enabled: unknown): Promise<string | undefined> {
+    if (enabled !== true || process.platform !== 'linux') return undefined
+    const status = await orcaCli(['status', '--environment', 'local'], 2500).catch(() => undefined)
+    if (field(status, 'runtime', 'appVersion') !== NATIVE_CHAT_ORCA_VERSION || field(status, 'app', 'desktopWindowStatus') !== 'available') return undefined
+    return field(status, 'runtime', 'runtimeId')
+  }
+
+  async function chatForDispatch(dispatchId: string | undefined): Promise<string | undefined> {
+    if (!dispatchId || !/^ctx_[A-Za-z0-9]+$/.test(dispatchId)) return undefined
+    if (!chatSessionsByDispatch.has(dispatchId)) await readWorkerDispatch(dispatchId)
+    return chatSessionsByDispatch.get(dispatchId)
   }
 
   /** worker-list is newest first. A finished task can have cleared its current dispatch id. */
@@ -421,7 +464,7 @@ export default function activate(orca: OrcaWorkerApi): void {
     for (const name of [`${stepId}.md`, `${stepId}.txt`]) {
       try {
         const content = await readFile(path.join(run.runDir, name), 'utf8')
-        return content.length > OUTPUT_CHARS ? `${content.slice(0, OUTPUT_CHARS)}\n…` : content
+        return outputPreview(content)
       } catch {
         // Try the next name.
       }
@@ -449,9 +492,17 @@ export default function activate(orca: OrcaWorkerApi): void {
       if (!(await stat(file)).isFile()) throw new Error(`No file ${file}.`)
       const env: Record<string, string> = { PLAYBOOK_RUN_DIR: run.runDir, PLAYBOOK_STEP: step.id }
       for (const [name, value] of Object.entries(run.inputs)) env[`PLAYBOOK_INPUT_${name.toUpperCase()}`] = value
+      const attemptFile = scriptAttemptFile(run.runDir, taskId)
+      if (!attemptFile) throw new Error('Invalid script task id.')
       const output = await runScript(file, run.runDir, env, step.timeoutSec)
+      const preview = outputPreview(output)
+      // If the plugin restarts before reporting completion, Orca can retry this task ID.
+      await writeFile(attemptFile, preview, {
+        flag: constants.O_WRONLY | constants.O_CREAT | constants.O_TRUNC | constants.O_NOFOLLOW | constants.O_NONBLOCK,
+        mode: 0o600
+      })
       await writeFile(path.join(run.runDir, `${step.id}.txt`), output)
-      result = { status: 'completed', output }
+      result = { status: 'completed', output: preview }
     } catch (error) {
       result = { status: 'failed', error: (error as Error).message }
     }
@@ -465,7 +516,7 @@ export default function activate(orca: OrcaWorkerApi): void {
     scripts.delete(taskId)
     if (run.tasks[step.id]?.taskId !== taskId) return
     Object.assign(state, { status: result.status, endedAt: completedAt, error: result.error })
-    if (result.output !== undefined) state.output = result.output.length > OUTPUT_CHARS ? `${result.output.slice(0, OUTPUT_CHARS)}\n…` : result.output
+    if (result.output !== undefined) state.output = result.output
     refreshStatus(run)
     run.updatedAt = Date.now()
     await save()
@@ -703,20 +754,22 @@ export default function activate(orca: OrcaWorkerApi): void {
     const stillIndexing = !indexedAt && !firstReadFailed
     const mine = chosen ? runs.filter((run) => run.workspaceId === chosen!.id || run.workspacePath === chosen!.path) : []
     const live = chosen && mine.some((run) => run.status === 'running' || run.status === 'waiting') ? await agentsByTask(chosen.id) : new Map<string, AgentLive>()
-    const shown = mine.map((run) => {
+    const settings = chosen ? await orca.host.call('settings.get', {}).catch(() => undefined) : undefined
+    const chatRuntime = mine.length ? await nativeChatRuntime(settings?.settings?.experimentalOpenChat) : undefined
+    const shown = await Promise.all(mine.map(async (run) => {
       const info = publicRun(run)
-      for (const step of run.playbook.steps) {
+      await Promise.all(run.playbook.steps.map(async (step) => {
         const state = info.tasks[step.id]
         const agent = state && (live.get(taskTitle(run, step, state.attempt)) ?? (state.attempt === 1 ? live.get(step.title) : undefined))
         if (agent && state.status === 'dispatched') state.live = agent
-      }
+        if (chatRuntime && step.kind === 'agent' && state && await chatForDispatch(state.dispatchId)) state.chatAvailable = true
+      }))
       return info
-    })
+    }))
     const own = new Set(runs.map((run) => run.id))
     const sessions = chosen ? sessionsOf((await worktreeRows()).find((row) => row.path === chosen!.path)) : []
     // A Run a conversation of this workspace dispatched belongs to that conversation, not to the list on its own.
     const attached = new Set<string>()
-    const settings = sessions.length ? await orca.host.call('settings.get', {}).catch(() => undefined) : undefined
     const firstPrompts = await firstPromptsFor(settings?.settings?.localJournalPath, sessions)
     for (const session of sessions) {
       if (assignees.has(session.id)) session.isWorker = true
@@ -864,7 +917,28 @@ export default function activate(orca: OrcaWorkerApi): void {
       task.dispatch_id = `script_${task.id}`
       data.dispatches[task.dispatch_id] = { dispatchedAt: state.startedAt, agent: `script ${step.run}`, ...(state.endedAt !== undefined ? { completedAt: state.endedAt } : {}) }
     }
-    return json(buildTimeline(data.tasks, data.gates, data.messages, data.dispatches))
+    const timeline = buildTimeline(data.tasks, data.gates, data.messages, data.dispatches)
+    if (!own?.loops) return json(timeline)
+    const current = new Set(Object.values(own.tasks).map((task) => task.taskId))
+    const gateIds = new Set(data.gates.map((gate) => gate.task_id))
+    const replaced = data.tasks.filter((task) => !current.has(task.id))
+    const reports = new Map(replaced.map((task) => [task.id, resultFields(task.result)]))
+    const settings = await orca.host.call('settings.get', {}).catch(() => undefined)
+    const chatRuntime = await nativeChatRuntime(settings?.settings?.experimentalOpenChat)
+    const history: TimelineStep[] = await Promise.all(buildRunGraph(replaced, data.workers).map(async (node) => {
+      const report = reports.get(node.id)
+      const decision = report?.decision
+      const kind = gateIds.has(node.id) || typeof decision === 'string' ? 'gate' : typeof report?.script === 'string' ? 'script' : 'agent'
+      const dispatch = data.workers.find((worker) => worker.taskId === node.id)?.dispatchId ?? node.dispatchId
+      const chatAvailable = !!chatRuntime && kind === 'agent' && !!await chatForDispatch(dispatch)
+      const result = kind === 'script' ? await readScriptAttempt(own.runDir, node.id) : node.result
+      const scriptError = kind === 'script' && typeof report?.error === 'string' ? report.error : undefined
+      const resultUnavailable = kind === 'script' && result === undefined && scriptError === undefined
+      return { ...node, kind, result: scriptError ?? result, ...(resultUnavailable ? { resultUnavailable } : {}),
+        ...(chatAvailable ? { chatAvailable } : {}), ...(decision === 'ok' || decision === 'revise' || decision === 'popraw' ? { decision } : {}),
+        ...(typeof report?.comment === 'string' ? { comment: report.comment } : {}) }
+    }))
+    return json({ ...timeline, history })
   })
 
   orca.panels.handle('session.view', async ({ sessionId, runIds }) => {
@@ -929,6 +1003,55 @@ export default function activate(orca: OrcaWorkerApi): void {
       cursor = transcript.nextCursor
     }
     return json({ lines: redact(transcriptLines(messages)) })
+  })
+
+  orca.panels.handle('step.openFile', async ({ runId, taskId, kind }) => {
+    await load()
+    const run = runs.find((candidate) => candidate.id === runId)
+    const step = run?.playbook.steps.find((candidate) => run.tasks[candidate.id]?.taskId === taskId)
+    if (!run || !step) throw new Error('This step attempt is no longer current.')
+    const task = run.tasks[step.id]
+    const relative = kind === 'script' && step.kind === 'script'
+      ? path.join(PLAYBOOK_DIR, 'scripts', step.run)
+      : kind === 'result' && step.kind !== 'gate' && task.status === 'completed' && task.output !== undefined
+        ? path.join(RUNS_DIR, run.id, `${step.id}.${step.kind === 'script' ? 'txt' : 'md'}`)
+        : undefined
+    if (!relative) throw new Error('There is no file for this action.')
+    const root = await realpath(run.workspacePath)
+    const file = path.resolve(root, relative)
+    const inside = path.relative(root, file)
+    if (!inside || inside.startsWith('..' + path.sep) || path.isAbsolute(inside)) throw new Error('The file is outside the workspace.')
+    const actual = await realpath(file).catch(() => undefined)
+    if (actual !== file) throw new Error('The file is missing or is a symbolic link.')
+    const info = await stat(file)
+    if (!info.isFile()) throw new Error('This step has no regular file to open.')
+    if (kind === 'result' && task.attempt > 1 && (!task.startedAt || info.mtimeMs < task.startedAt)) {
+      throw new Error('This file predates the selected attempt.')
+    }
+    return orca.host.call('editor.open', { workspaceId: run.workspaceId, path: inside })
+  })
+
+  orca.panels.handle('step.openChat', async ({ runId, taskId }) => {
+    if (!/^task_[A-Za-z0-9]+$/.test(taskId)) throw new Error('Invalid step.')
+    const settings = await orca.host.call('settings.get', {}).catch(() => undefined)
+    if (settings?.settings?.experimentalOpenChat !== true) throw new Error('Experimental chat navigation is off.')
+    const runtimeId = await nativeChatRuntime(true)
+    if (!runtimeId) throw new Error(`Chat navigation requires desktop Orca ${NATIVE_CHAT_ORCA_VERSION} on Linux. Use Last lines or the step result.`)
+    await load()
+    const run = runs.find((candidate) => candidate.id === runId)
+    if (!run) throw new Error('This playbook run is no longer available.')
+    const current = run.playbook.steps.find((step) => run.tasks[step.id]?.taskId === taskId)
+    if (current && current.kind !== 'agent') throw new Error('This step has no agent chat.')
+    let dispatchId = current && run.tasks[current.id]?.dispatchId
+    if (!dispatchId && (current || run.loops > 0)) {
+      const result = await orcaCli(['orchestration', 'worker-list', '--run', run.id])
+      const workers = Array.isArray(result.workers) ? result.workers as CliWorker[] : []
+      dispatchId = workers.find((worker) => worker.taskId === taskId)?.dispatchId
+    }
+    const sessionId = await chatForDispatch(dispatchId)
+    if (!sessionId) throw new Error('The chat session for this attempt is unavailable.')
+    await focusExistingNativeChat(run.workspaceId, sessionId, runtimeId)
+    return { opened: true }
   })
 
   orca.panels.handle('agent.show', async ({ terminalId, workspacePath: wanted, workspaceId }) => {

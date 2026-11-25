@@ -124,6 +124,7 @@ export function buildRunGraph(tasks: CliTask[], workers: CliWorker[]): RunNode[]
     if (dispatchId) node.dispatchId = dispatchId
     if (worker?.state) node.workerState = worker.state
     if (worker?.liveness) node.liveness = worker.liveness
+    if (worker?.liveness === 'live' && worker.terminal?.startsWith('term_')) node.terminalId = worker.terminal
     if (worker?.outcome) node.outcome = worker.outcome
     const path = workspacePath(worker?.workspace)
     if (path) node.workspacePath = path

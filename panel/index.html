@@ -58,6 +58,22 @@
     .muted { color: var(--muted); }
       .small { font-size: 11px; }
       .drawer h3 { margin: 0 0 4px; font-size: 13px; }
+      .step-preview { display: flex; align-items: center; justify-content: space-between; gap: 4px 8px; flex-wrap: wrap; padding: 4px 8px 7px; overflow-wrap: anywhere; }
+      .step-preview > span { flex: 1 1 100px; min-width: 0; }
+      .step-preview button { flex: none; }
+      .step-preview.graph-preview { padding: 2px 8px 4px; font-size: 10.5px; gap: 2px; align-content: flex-start; }
+      .graph-preview > span { flex-basis: 100%; display: -webkit-box; -webkit-box-orient: vertical; -webkit-line-clamp: 2; overflow: hidden; }
+      .quick-link { max-width: 9em; overflow-wrap: anywhere; }
+      .agent-main { display: flex; align-items: center; gap: 4px; }
+      .agent-main .agent-row { flex: 1; min-width: 0; }
+      .agent-main .quick-link { flex: none; }
+      svg .graph-quick { display: block; padding: 0 3px; font-size: 12px; line-height: 19px; }
+      svg .graph-quick.chat-quick { font-size: 10.5px; white-space: nowrap; }
+      .timeline-chat-row { display: grid; grid-template-columns: minmax(0, 1fr) auto; align-items: start; gap: 2px; }
+      .timeline-chat-row > button { margin: 3px 5px 0 0; white-space: nowrap; }
+      .timeline-chat-row > .chat-notice { grid-column: 1 / -1; margin-left: 55px; }
+      .chat-notice { font-size: 11px; padding: 3px 6px; line-height: 1.25; overflow-wrap: anywhere; }
+      .node-title { font-size: 12px; line-height: 14px; overflow-wrap: anywhere; display: -webkit-box; -webkit-box-orient: vertical; -webkit-line-clamp: 2; overflow: hidden; }
       .tabs { display: flex; gap: 4px; margin-top: 10px; flex-wrap: wrap; }
       .tabs button { padding: 3px 7px; font-size: 12px; }
       .tabs button.on { border-color: var(--fg); font-weight: 600; }
@@ -95,6 +111,9 @@
       .tl-dur { font-size: 11px; }
       /* In a narrow panel the duration goes under the text, so the text keeps the width. */
       @container (max-width: 360px) {
+        .timeline-chat-row { grid-template-columns: minmax(0, 1fr); gap: 0; }
+        .timeline-chat-row > button { justify-self: start; margin: 0 5px 4px 55px; }
+        .timeline-chat-row .tl-text { -webkit-line-clamp: 4; line-clamp: 4; }
         .tl-row { grid-template-columns: auto 34px 14px minmax(0, 1fr); }
         .tl-dur { grid-column: 4; }
         .tl-dur:empty { display: none; }
@@ -190,6 +209,7 @@
       const state = {
         workspaceId: null, following: false, pinned: null, workspaces: [], playbooks: [], runs: [], orcaRuns: [], waitingElsewhere: [],
         sel: null, nodes: {}, selected: null, lines: {}, busy: false, openOutputs: new Set(),
+        timelineRow: null, chatFeedback: null,
         sessions: [], home: 'workspace', queueDecision: null, waitingDecisions: [], catalog: null, view: null, timelines: {}, timelineErrors: {}, stale: new Set(), sessionViews: {}, showAllAgents: false, selectedSession: null, followBottom: true, detailsOpen: {}
       }
       const STATUS = {
@@ -538,6 +558,7 @@
             if (task?.live && LIVE[task.live.state]) [label, color] = LIVE[task.live.state]
             const sub = step.kind === 'gate' ? 'gate · your decision' : step.kind === 'script' ? `script · ${step.run}` : [step.agent, step.model].filter(Boolean).join(' · ')
             return { id: step.id, title: step.title, sub, label, color, needs: step.needs, depth: step.depth, kind: step.kind, loop: step.loop,
+              runId: run.id, taskId: task?.taskId, chatAvailable: task?.chatAvailable, waitingDecision: !!task?.gateId && !task.decision,
               attempt: task?.attempt ?? 1, live: task?.live, since: task?.live?.since ?? task?.startedAt, dispatchId: task?.dispatchId && task.dispatchId !== 'failed' && task.dispatchId !== 'started' ? task.dispatchId : null,
               workspaceId: run.workspaceId, status: task?.status, startedAt: task?.startedAt, endedAt: task?.endedAt, result: task?.output, error: task?.error, decision: task?.decision, comment: task?.comment, waitingFor: step.needs.filter((need) => run.tasks[need]?.status !== 'completed').map((need) => titles[need] ?? need) }
           })
@@ -550,6 +571,7 @@
           if (node.live && LIVE[node.live.state]) [label, color] = LIVE[node.live.state]
           return { id: node.id, title: node.title, sub: [node.agent, node.model, node.effort].filter(Boolean).join(' · ') || 'task', label, color, needs: node.needs, depth: node.depth, kind: 'agent',
             attempt: node.attempt, live: node.live, since: node.live?.since, dispatchId: node.dispatchId, workspacePath: node.workspacePath, result: node.result, status: node.status, startedAt: node.createdAt,
+            terminalId: node.terminalId,
             outcome: node.outcome, waitingFor: node.needs.filter((need) => nodes.find((n) => n.id === need)?.status !== 'completed').map((need) => titles[need] ?? need) }
         })
       }
@@ -566,7 +588,7 @@
         if (kind === 'preview') { $('tabs').innerHTML = ''; return }
         const tab = (id, label) => `<button data-view="${id}" class="${view === id ? 'on' : ''}">${esc(label)}</button>`
         $('tabs').innerHTML = tab('graph', 'Graph') + tab('timeline', 'Timeline') + tab('agents', `Agents (${agentCount ?? '…'})`)
-        for (const button of $('tabs').querySelectorAll('button')) button.onclick = () => { state.view = button.dataset.view; state.followBottom = true; void render() }
+        for (const button of $('tabs').querySelectorAll('button')) button.onclick = () => { state.view = button.dataset.view; state.timelineRow = null; state.followBottom = true; void render() }
       }
 
       /** Why the Graph tab has no graph here, and how to get one. */
@@ -637,7 +659,8 @@
           renderTimeline(anyRun, run, nodes)
         }
         renderGate(run)
-        renderDrawer(nodes, note ? '' : view === 'graph' ? 'Click a step on the graph to see its agent, last lines and result.' : 'Click a timeline row or an agent to see its result and last lines.')
+        const past = view === 'timeline' && run ? historyNodes(run.id) : []
+        renderDrawer([...nodes, ...past], note ? '' : 'Select a step to preview it and see its actions.')
         if (run?.error) setMsg(`Run error: ${run.error}`, true)
         $('footer').innerHTML = session
           ? `Orca conversation: <code>${esc(session.id)}</code>${session.runIds?.length ? ` · Runs: ${session.runIds.map((id) => `<code>${esc(id)}</code>`).join(', ')}` : ''} · agents linked by their tasks' <code>creator_orca_session_id</code>`
@@ -691,6 +714,13 @@
         }
       }
 
+      function historyNodes(runId) {
+        return (state.timelines[runId]?.history ?? []).map((task) => {
+          const [label, color] = STATUS[task.status] ?? [task.status, 'var(--pending)']
+          return { ...task, runId, taskId: task.id, attempt: task.attempt ?? 1, label, color, historical: true, sub: 'Recorded attempt' }
+        })
+      }
+
       // Top-down timeline, newest at the bottom like a chat: one row per event, lanes on the left show who worked in parallel.
       function renderTimeline(runId, run, nodes) {
         const box = $('timeline')
@@ -719,10 +749,12 @@
           }
         }
         const activeAt = (at) => Object.values(spans).filter((item) => item.start <= at && at < item.end)
-        const taskToNode = (taskId) => {
-          if (!run) return taskId
-          const entry = Object.entries(run.tasks).find(([, task]) => task.taskId === taskId)
-          return entry ? entry[0] : null
+        const past = run ? historyNodes(run.id) : []
+        const nodeByTask = new Map([...nodes, ...past].map((node) => [node.taskId ?? node.id, node]))
+        const chatRows = new Map()
+        for (const event of events) {
+          if (!nodeByTask.get(event.taskId)?.chatAvailable) continue
+          if (event.kind === 'done' || event.kind === 'failed' || (event.kind === 'started' && !chatRows.has(event.taskId))) chatRows.set(event.taskId, event)
         }
         const dayOf = (ms) => new Date(ms).toLocaleDateString(LOCALE, { day: '2-digit', month: '2-digit', year: 'numeric' })
         const first = events[0].at
@@ -756,26 +788,47 @@
             const bar = own || overlapping.length ? `<i class="lane-bar${own ? ' own' : ''}${working ? ' working' : ''}"></i>` : ''
             bars += `<span class="lane-slot">${bar}</span>`
           }
-          const node = event.taskId ? taskToNode(event.taskId) : null
-          const selected = node && state.selected === node
-          const detail = [event.attempt > 1 ? `attempt ${event.attempt}` : '', event.kind === 'decision' || event.kind === 'report' ? '' : event.detail].filter(Boolean).join(' · ')
+          const node = event.taskId ? nodeByTask.get(event.taskId) : null
+          const eventKey = `${event.kind}:${event.taskId}:${event.at}`
+          const selected = node?.id === state.selected && eventKey === state.timelineRow
+          const hasChatButton = !!node && chatRows.get(event.taskId) === event
+          const attempt = event.attempt > 1 || node?.historical ? `attempt ${event.attempt ?? node.attempt}` : ''
+          const detail = [attempt, event.kind === 'decision' || event.kind === 'report' ? '' : event.detail].filter(Boolean).join(' · ')
           const emphasis = ['first-prompt', 'sent-back'].includes(event.kind) ? ` ${event.kind}` : ''
           const iconColor = event.kind === 'started' && ownSpan?.working ? 'var(--muted)' : KIND_COLOR[event.kind] ?? 'var(--muted)'
-          html += `<div class="tl-row${selected ? ' sel' : ''}${emphasis}"${node ? ` data-task="${esc(node)}"` : ''}><span class="lanes"${laneNames ? ` role="img" aria-label="${esc(laneNames)}" title="${esc(laneNames)}"` : ' aria-hidden="true"'}>${bars}</span>` +
+          if (hasChatButton) html += '<div class="timeline-chat-row">'
+          html += `<div class="tl-row${selected ? ' sel' : ''}${emphasis}"${node ? ` data-task="${esc(event.taskId)}" data-event="${esc(eventKey)}" role="button" tabindex="0" aria-expanded="${selected}"` : ''}><span class="lanes"${laneNames ? ` role="img" aria-label="${esc(laneNames)}" title="${esc(laneNames)}"` : ' aria-hidden="true"'}>${bars}</span>` +
             `<span class="tl-time">${esc(clock(event.at))}</span><span class="tl-icon" style="color:${iconColor}">${ICON[event.kind] ?? '·'}</span>` +
             `<span class="tl-text" title="${esc(eventText(event) + (detail ? ` · ${detail}` : ''))}">${esc(cut(eventText(event), 200))}${detail ? `<span class="muted small"> · ${esc(cut(detail, 120))}</span>` : ''}</span>` +
             `<span class="tl-dur">${event.duration !== undefined ? esc(span(event.duration)) : ''}</span></div>`
+          if (hasChatButton) html += quickButton(node) + chatNoticeMarkup(node, 'timeline') + '</div>'
+          if (selected && node) html += `<div class="step-preview"><span>${esc(stepPreview(node))}</span>${hasChatButton ? '' : quickButton(node)}<button class="small" data-more>Details ↓</button></div>`
           previous = event
         }
-        const keepBottom = state.followBottom || (box.firstChild && box.firstChild.scrollHeight - box.firstChild.scrollTop - box.firstChild.clientHeight < 40)
+        const keepBottom = !state.timelineRow && (state.followBottom || (box.firstChild && box.firstChild.scrollHeight - box.firstChild.scrollTop - box.firstChild.clientHeight < 40))
         const scroll = box.firstChild?.scrollTop ?? 0
+        const focused = box.contains(document.activeElement) ? document.activeElement.dataset.event : undefined
         box.innerHTML = `<div class="timeline">${html}</div>`
         const list = box.firstChild
         list.scrollTop = keepBottom ? list.scrollHeight : scroll
         list.onscroll = () => { state.followBottom = list.scrollHeight - list.scrollTop - list.clientHeight < 40 }
         for (const row of list.querySelectorAll('.tl-row[data-task]')) {
-          row.onclick = () => { state.selected = state.selected === row.dataset.task ? null : row.dataset.task; void render() }
+          const node = nodeByTask.get(row.dataset.task)
+          bindStepRow(row, () => {
+            const close = state.timelineRow === row.dataset.event
+            state.timelineRow = close ? null : row.dataset.event
+            state.selected = close ? null : node.id
+            void render()
+          })
+          if (focused === row.dataset.event) row.focus({ preventScroll: true })
         }
+        for (const button of list.querySelectorAll('[data-quick]')) {
+          button.onclick = () => {
+            const eventKey = button.closest('.timeline-chat-row')?.querySelector('[data-event]')?.dataset.event
+            void runStepAction(nodeByTask.get(button.dataset.quick), button.dataset.action, { eventKey, place: 'timeline' })
+          }
+        }
+        for (const button of list.querySelectorAll('[data-more]')) button.onclick = focusDrawer
       }
 
       function agentsWord(count) { return count === 1 ? '1 agent' : `${count} agents` }
@@ -828,7 +881,8 @@
       function agentNode(agent) {
         let [label, color] = STATUS[agent.status] ?? [agent.status, 'var(--pending)']
         if (agent.live && LIVE[agent.live.state]) [label, color] = LIVE[agent.live.state]
-        return { id: agent.id, title: agent.title, sub: [agent.agent, agent.model, agent.effort].filter(Boolean).join(' · ') || 'task', label, color, kind: 'agent', attempt: 1, status: agent.status,
+        return { id: agent.id, title: agent.title, sub: [agent.agent, agent.model, agent.effort].filter(Boolean).join(' · ') || 'task', label, color, kind: 'agent', attempt: agent.attempt ?? 1, status: agent.status,
+          terminalId: agent.terminalId,
           live: agent.live, since: agent.live?.since, dispatchId: agent.dispatchId, workspacePath: agent.workspacePath, result: agent.result, outcome: agent.outcome,
           startedAt: agent.startedAt, endedAt: agent.endedAt, createdAt: agent.createdAt, workerSessionId: agent.workerSessionId,
           runId: agent.runId, needs: [], waitingFor: [] }
@@ -874,15 +928,25 @@
         const working = (node) => Number(!!node.live || node.status === 'dispatched')
         const order = [...agents].sort((a, b) => working(b) - working(a) || (b.startedAt ?? 0) - (a.startedAt ?? 0))
         const shown = state.showAllAgents ? order : order.slice(0, 12)
-        const rows = shown.map((node) => `<div class="srow agent-row${state.selected === node.id ? ' sel' : ''}" data-agent="${esc(node.id)}">` +
+        const rows = shown.map((node) => `<div class="agent-main"><div class="srow agent-row${state.selected === node.id ? ' sel' : ''}" data-agent="${esc(node.id)}" role="button" tabindex="0" aria-expanded="${state.selected === node.id}">` +
           `<i class="agent-dot" aria-hidden="true" style="--status-color:${node.color ?? 'var(--pending)'}"></i>` +
           `<span title="${esc(node.title)}">${esc(cut(node.title, 46))}<div class="muted small">${esc(node.sub)}</div>` +
           (node.startedAt === undefined && !node.rounds ? '' : `<div class="start-time">${node.startedAt === undefined ? '' : `Started ${timestamp(node.startedAt)}`}` +
           (node.rounds > 1 ? `${node.startedAt === undefined ? '' : ' · '}${node.rounds} rounds` : node.startedAt && node.endedAt ? ` · ${esc(span(node.endedAt - node.startedAt))}` : '') + '</div>') +
-          `</span><span class="agent-state small">${esc(node.label)}</span></div>`).join('')
+          `</span><span class="agent-state small">${esc(node.label)}</span></div>${quickButton(node)}</div>` +
+          (state.selected === node.id ? `<div class="step-preview"><span>${esc(stepPreview(node))}</span><button class="small" data-more>Details ↓</button></div>` : '') + chatNoticeMarkup(node, 'agents')).join('')
         const more = order.length > shown.length ? `<div class="row"><button id="allAgents" class="small">Show all (${order.length})</button></div>` : ''
-        $('agentsList').innerHTML = `<div class="tree">${rows}${more}</div>`
-        for (const element of $('agentsList').querySelectorAll('.srow[data-agent]')) element.onclick = () => { state.selected = state.selected === element.dataset.agent ? null : element.dataset.agent; void render() }
+        const box = $('agentsList')
+        const focused = box.contains(document.activeElement) ? document.activeElement.dataset.agent : undefined
+        box.innerHTML = `<div class="tree">${rows}${more}</div>`
+        for (const element of box.querySelectorAll('.srow[data-agent]')) {
+          bindStepRow(element, () => selectStep(element.dataset.agent))
+          if (focused === element.dataset.agent) element.focus({ preventScroll: true })
+        }
+        for (const button of box.querySelectorAll('[data-quick]')) {
+          button.onclick = () => void runStepAction(shown.find((node) => (node.taskId ?? node.id) === button.dataset.quick), button.dataset.action, { place: 'agents' })
+        }
+        for (const button of box.querySelectorAll('[data-more]')) button.onclick = focusDrawer
         if ($('allAgents')) $('allAgents').onclick = () => { state.showAllAgents = true; void render() }
       }
 
@@ -894,6 +958,117 @@
         return node.waitingFor?.length && ['pending', 'blocked', 'ready', undefined].includes(node.status) && !node.live
           ? `Waits for ${node.waitingFor.join(', ')}`
           : ''
+      }
+
+      function bindStepRow(element, select) {
+        element.onclick = select
+        element.onkeydown = (event) => {
+          if (event.key === 'Enter' || event.key === ' ') { event.preventDefault(); select() }
+        }
+      }
+
+      function selectStep(id) {
+        state.selected = state.selected === id ? null : id
+        state.timelineRow = null
+        void render()
+      }
+
+      const SCRIPT_OUTPUT_UNAVAILABLE = 'Output for this script attempt is unavailable.'
+
+      function stepPreview(node) {
+        if (node.resultUnavailable) return SCRIPT_OUTPUT_UNAVAILABLE
+        if (node.error) return node.error
+        if (node.comment) return node.comment
+        if (node.decision) return node.decision === 'ok' ? 'Decision: OK' : 'Decision: Revise'
+        if (node.result) return cut(node.result.trim().split('\n')[0], 110)
+        if (node.waitingDecision) return 'Waiting for your decision.'
+        return waitReason(node) || [graphStatus(node), node.sub].filter(Boolean).join(' · ')
+      }
+
+      const STEP_ACTIONS = {
+        chat: 'Open chat',
+        terminal: 'Open terminal', workspace: 'Open workspace', script: 'Open script', file: 'Open result file',
+        transcript: 'Last lines', result: 'View result', gate: 'Open decision', decision: 'View decision'
+      }
+
+      function actionsFor(node) {
+        const actions = []
+        if (node.chatAvailable && node.runId && node.taskId) actions.push('chat')
+        if (node.live?.terminalId || node.terminalId) actions.push('terminal')
+        if (node.kind === 'script' && node.runId && node.taskId && !node.historical) actions.push('script')
+        if (node.waitingDecision) actions.push('gate')
+        else if (node.decision) actions.push('decision')
+        if (node.result && node.kind !== 'gate') {
+          if (node.runId && node.taskId && node.status === 'completed' && !node.historical) actions.push('file')
+          actions.push('result')
+        }
+        if (node.dispatchId && node.kind === 'agent') actions.push('transcript')
+        const here = workspace()
+        if (!actions.includes('terminal') && ((node.workspacePath && node.workspacePath !== here?.path) || (node.workspaceId && node.workspaceId !== state.workspaceId))) actions.push('workspace')
+        return actions
+      }
+
+      function quickButton(node, compact = false) {
+        const [action] = actionsFor(node)
+        if (!action) return ''
+        const label = esc(STEP_ACTIONS[action])
+        const icon = ['transcript', 'result', 'decision'].includes(action) ? '≡' : '↗'
+        const attempt = node.attempt ? ` · attempt ${node.attempt}` : ''
+        const buttonText = compact && action !== 'chat' ? icon : label
+        return `<button type="button" class="small quick-link${compact ? ' graph-quick' : ''}${action === 'chat' ? ' chat-quick' : ''}" data-quick="${esc(compact ? node.id : node.taskId ?? node.id)}" data-action="${action}" aria-label="${label} · ${esc(node.title + attempt)}" title="${label}">${buttonText}</button>`
+      }
+
+      function focusDrawer() { $('drawer').querySelector('h3')?.focus() }
+
+      function chatNoticeMarkup(node, place) {
+        const notice = state.chatFeedback
+        if (notice?.place !== place || notice.runId !== node.runId || notice.taskId !== node.taskId) return ''
+        return `<div class="chat-notice ${notice.error ? 'err' : 'muted'}" role="${notice.error ? 'alert' : 'status'}">${esc(notice.text)}</div>`
+      }
+
+      async function runStepAction(node, action, { eventKey, place } = {}) {
+        if (!node || !actionsFor(node).includes(action)) return
+        if (action === 'chat') state.chatFeedback = null
+        if (state.selected !== node.id || (eventKey && state.timelineRow !== eventKey)) {
+          state.selected = node.id
+          state.timelineRow = eventKey ?? null
+          await render()
+        }
+        const chatNotice = async (text, error) => {
+          if (state.selected !== node.id || playbookRun()?.id !== node.runId) return
+          state.chatFeedback = { runId: node.runId, taskId: node.taskId, place, text, error }
+          await render()
+        }
+        try {
+          if (action === 'gate') {
+            state.gateStep = node.id
+            renderGate(playbookRun())
+            $('gate').focus()
+          } else if (action === 'decision') {
+            focusDrawer()
+          } else if (action === 'result') {
+            const details = $('resultBox')
+            if (details) { details.open = true; details.querySelector('summary').focus() }
+          } else if (action === 'chat') {
+            const { opened } = await orca.plugin.request('step.openChat', { runId: node.runId, taskId: node.taskId })
+            await chatNotice(opened ? 'Opened the agent chat.' : 'Orca could not open the chat.', !opened)
+          } else if (action === 'terminal' || action === 'workspace') {
+            const terminalId = action === 'terminal' ? node.live?.terminalId ?? node.terminalId : undefined
+            const { shown } = await orca.plugin.request('agent.show', { terminalId, workspacePath: node.workspacePath, workspaceId: node.workspaceId })
+            setMsg(shown === 'terminal' ? 'Opened the agent terminal.' : shown === 'workspace' ? 'Opened the workspace.' : 'The terminal or workspace is no longer available.', shown === 'none')
+          } else if (action === 'script' || action === 'file') {
+            const { opened } = await orca.plugin.request('step.openFile', { runId: node.runId, taskId: node.taskId, kind: action === 'file' ? 'result' : 'script' })
+            setMsg(opened ? 'Opened the file in Orca.' : 'Orca could not open the file.', !opened)
+          } else if (action === 'transcript') {
+            const { lines } = await orca.plugin.request('step.lines', { dispatchId: node.dispatchId }, { timeoutMs: 90000 })
+            state.lines[node.dispatchId] = lines
+            await render()
+            if (state.selected === node.id) $('stepTranscript')?.focus()
+          }
+        } catch (error) {
+          if (action === 'chat') await chatNotice(error.message ?? String(error), true)
+          else setMsg(error.message ?? String(error), true)
+        }
       }
 
       let tooltipAnchor
@@ -926,7 +1101,8 @@
         // same stage (they can run at the same time) sit inside one dashed frame labelled "parallel · N", so a wrapped third
         // step does not look like a later stage.
         const narrow = $('graphWrap').clientWidth < 320
-        const W = 172, H = 62, GX = 16, GY = 34, PAD = 18, LOOP = narrow ? 50 : 70, MAX = narrow ? 1 : 2, FRAME = 16
+        const W = 172, H = 74, GX = 16, GY = 34, PAD = 18, LOOP = narrow ? 50 : 70, MAX = narrow ? 1 : 2, FRAME = 16
+        const nodeHeight = (node) => H + (state.selected === node.id ? 53 + (chatNoticeMarkup(node, 'graph') ? 66 : 0) : 0)
         const byDepth = {}
         for (const node of nodes) (byDepth[node.depth] ??= []).push(node)
         const rows = []
@@ -937,8 +1113,9 @@
           if (group.length > 1) y += FRAME
           const top = y
           for (let i = 0; i < group.length; i += MAX) {
-            rows.push({ list: group.slice(i, i + MAX), y })
-            y += H + GY
+            const list = group.slice(i, i + MAX)
+            rows.push({ list, y })
+            y += Math.max(...list.map(nodeHeight)) + GY
           }
           if (group.length > 1) frames.push({ top: top - FRAME + 2, bottom: y - GY + 6, count: group.length })
         }
@@ -949,7 +1126,7 @@
         const pos = {}
         for (const [rowIndex, row] of rows.entries()) {
           const used = row.list.length * W + (row.list.length - 1) * GX
-          row.list.forEach((node, index) => { pos[node.id] = { x: PAD + (inner - used) / 2 + index * (W + GX), y: row.y, rowIndex } })
+          row.list.forEach((node, index) => { pos[node.id] = { x: PAD + (inner - used) / 2 + index * (W + GX), y: row.y, rowIndex, height: nodeHeight(node) } })
         }
         const height = y - GY + PAD
         svg.setAttribute('width', width)
@@ -967,7 +1144,7 @@
           for (const need of node.needs) {
             const a = pos[need], b = pos[node.id]
             if (!a || !b) continue
-            const x1 = a.x + W / 2, y1 = a.y + H, x2 = b.x + W / 2, y2 = b.y - 2, my = (y1 + y2) / 2
+            const x1 = a.x + W / 2, y1 = a.y + a.height, x2 = b.x + W / 2, y2 = b.y - 2, my = (y1 + y2) / 2
             // Route links that skip a row around the cards in between.
             const lane = x1 > PAD + inner / 2 ? PAD + inner + 11 : PAD - 11
             const edge = b.rowIndex - a.rowIndex > 1
@@ -984,17 +1161,21 @@
           }
         }
         for (const node of nodes) {
-          const { x, y } = pos[node.id]
+          const { x, y, height: cardHeight } = pos[node.id]
           const rx = node.kind === 'gate' ? 20 : node.kind === 'script' ? 3 : 9
           const dash = node.kind === 'gate' ? ' stroke-dasharray="5 3"' : ''
           const selected = state.selected === node.id
           const description = [node.title, node.sub, graphStatus(node), waitReason(node)].filter(Boolean).join('. ')
           const label = graphStatus(node)
-          html += `<g class="node" role="button" tabindex="0" aria-expanded="${selected}" aria-label="${esc(description)}" data-node="${esc(node.id)}"><rect class="node-box" x="${x}" y="${y}" width="${W}" height="${H}" rx="${rx}" fill="var(--card)" stroke="${selected ? 'var(--fg)' : 'var(--line)'}" stroke-width="${selected ? 2 : 1}"${dash}/>` +
-            `<circle cx="${x + 9}" cy="${y + 49}" r="3" fill="${node.color}"/>` +
-            `<text x="${x + 13}" y="${y + 20}">${esc(cut(node.title, 23))}</text>` +
-            `<text class="sub" x="${x + 13}" y="${y + 36}">${esc(cut(node.sub, 27))}</text>` +
-            `<text class="sub" x="${x + 17}" y="${y + 52}">${esc(cut(label, 26))}</text></g>`
+          const quick = quickButton(node, true)
+          const quickWidth = node.chatAvailable ? 60 : 24
+          html += `<g class="node" role="button" tabindex="0" aria-expanded="${selected}" aria-label="${esc(description)}" data-node="${esc(node.id)}"><rect class="node-box" x="${x}" y="${y}" width="${W}" height="${cardHeight}" rx="${rx}" fill="var(--card)" stroke="${selected ? 'var(--fg)' : 'var(--line)'}" stroke-width="${selected ? 2 : 1}"${dash}/>` +
+            `<foreignObject x="${x + 12}" y="${y + 7}" width="${W - 24}" height="29"><div class="node-title">${esc(node.title)}</div></foreignObject>` +
+            `<circle cx="${x + 9}" cy="${y + 59}" r="3" fill="${node.color}"/>` +
+            `<text class="sub" x="${x + 13}" y="${y + 44}">${esc(cut(node.sub, 27))}</text>` +
+            `<text class="sub" x="${x + 17}" y="${y + 62}">${esc(cut(label, quick ? 16 : 26))}</text></g>`
+          if (quick) html += `<foreignObject x="${x + W - quickWidth - 5}" y="${y + 48}" width="${quickWidth}" height="24">${quick}</foreignObject>`
+          if (selected) html += `<foreignObject x="${x + 3}" y="${y + H - 2}" width="${W - 6}" height="${cardHeight - H + 2}"><div class="step-preview graph-preview"><span title="${esc(stepPreview(node))}">${esc(stepPreview(node))}</span><button type="button" class="small" data-more>Details ↓</button></div>${chatNoticeMarkup(node, 'graph')}</foreignObject>`
         }
         if (svg.dataset.markup === html) return
         const focused = svg.contains(document.activeElement) ? document.activeElement.dataset.node : undefined
@@ -1008,56 +1189,53 @@
           group.onpointerenter = group.onfocus = show
           group.onpointerleave = () => { if (document.activeElement !== group) hideGraphTooltip() }
           group.onblur = hideGraphTooltip
-          group.onclick = () => { hideGraphTooltip(); state.selected = state.selected === node.id ? null : node.id; void render() }
-          group.onkeydown = (event) => {
-            if (event.key === 'Enter' || event.key === ' ') { event.preventDefault(); group.dispatchEvent(new Event('click')) }
-          }
+          bindStepRow(group, () => { hideGraphTooltip(); selectStep(node.id) })
           if (focused === node.id) { group.focus({ preventScroll: true }); hideGraphTooltip() }
         }
+        for (const button of svg.querySelectorAll('[data-quick]')) button.onclick = () => {
+          hideGraphTooltip()
+          void runStepAction(byId.get(button.dataset.quick), button.dataset.action, { place: 'graph' })
+        }
+        for (const button of svg.querySelectorAll('[data-more]')) button.onclick = focusDrawer
       }
 
-      function renderDrawer(nodes, hint = 'Click a step on the graph to see its agent, last lines and result.') {
+      function renderDrawer(nodes, hint) {
         const box = $('drawer')
         const node = nodes.find((candidate) => candidate.id === state.selected)
         if (!node) { box.dataset.html = ''; box.innerHTML = state.sel && nodes.length && hint ? `<div class="muted small" style="margin-top:6px">${esc(hint)}</div>` : ''; return }
         const key = node.dispatchId ?? ''
-        // Only offer it when it moves something on screen: a live terminal, or a workspace other than the one the user is in.
-        const here = workspace()
-        const canShow = !!(node.live?.terminalId || (node.workspacePath && node.workspacePath !== here?.path) || (node.workspaceId && node.workspaceId !== state.workspaceId))
-        const status = [node.label, node.live ? `for ${ago(node.since)}` : '', node.attempt > 1 ? `attempt ${node.attempt}` : '', node.outcome ? `worker outcome: ${node.outcome}` : ''].filter(Boolean).join(' · ')
-        const stable = [node.label, node.attempt > 1 ? `attempt ${node.attempt}` : '', node.outcome ? `worker outcome: ${node.outcome}` : ''].filter(Boolean).join(' · ')
+        const ended = node.attempt > 1 || node.historical ? `attempt ${node.attempt}` : ''
+        const status = [node.label, node.live ? `for ${ago(node.since)}` : '', ended, node.outcome ? `worker outcome: ${node.outcome}` : ''].filter(Boolean).join(' · ')
+        const stable = [node.label, ended, node.outcome ? `worker outcome: ${node.outcome}` : ''].filter(Boolean).join(' · ')
         const waiting = waitReason(node) ? `<div class="muted small">${esc(waitReason(node))}</div>` : ''
         const decision = node.decision ? `<div class="small">Decision: ${node.decision === 'ok' ? 'OK' : 'Revise'}${node.comment ? ` — "${esc(node.comment)}"` : ''}</div>` : ''
         const lines = state.lines[key]
-        const html = `<div class="card drawer"><h3>${esc(node.title)}</h3><div class="muted small">${esc(node.sub)}</div>` +
+        const actions = actionsFor(node).filter((action) => action !== 'decision').map((action) =>
+          `<button type="button" class="small" data-action="${action}">${esc(STEP_ACTIONS[action])}</button>`).join('')
+        const html = `<div class="card drawer"><h3 tabindex="-1">${esc(node.title)}</h3><div class="muted small">${esc(node.sub)}</div>` +
           `<div id="drawerStatus" class="small" style="color:${node.color};margin-top:4px">${esc(stable)}</div>${waiting}${decision}` +
           (node.error ? `<div class="err small">${esc(node.error)}</div>` : '') +
-          `<div class="row">${canShow ? '<button id="showAgent" class="small">Show agent ↗</button>' : ''}${node.dispatchId ? '<button id="lastLines" class="small">Last lines</button>' : ''}</div>` +
-          (lines ? `<pre>${esc(lines.length ? lines.join('\n') : 'No lines in the transcript.')}</pre>` : '') +
-          (node.result ? `<details${state.openOutputs.has(node.id) ? ' open' : ''} id="resultBox"><summary>Step result</summary><pre>${esc(node.result)}</pre></details>` : '') + '</div>'
+          (node.resultUnavailable ? `<div class="muted small">${SCRIPT_OUTPUT_UNAVAILABLE}</div>` : '') +
+          (actions ? `<div class="row">${actions}</div>` : '') + chatNoticeMarkup(node, 'drawer') +
+          (lines ? `<pre id="stepTranscript" tabindex="-1">${esc(lines.length ? lines.join('\n') : 'No lines in the transcript.')}</pre>` : '') +
+          (node.result && node.kind !== 'gate' ? `<details${state.openOutputs.has(node.taskId ?? node.id) ? ' open' : ''} id="resultBox"><summary>${node.historical ? 'Recorded result' : 'Step result'}</summary><pre>${esc(node.result)}</pre></details>` : '') + '</div>'
         // Rewriting the same drawer every 5 s would reset its scroll and text selection; only the elapsed time changes in place.
         if (box.dataset.html === html) { if ($('drawerStatus')) $('drawerStatus').textContent = status; return }
         box.dataset.html = html
         box.innerHTML = html
         $('drawerStatus').textContent = status
-        if ($('resultBox')) $('resultBox').ontoggle = () => { $('resultBox').open ? state.openOutputs.add(node.id) : state.openOutputs.delete(node.id) }
-        if ($('showAgent')) $('showAgent').onclick = async () => {
-          const input = {}
-          if (node.live?.terminalId) input.terminalId = node.live.terminalId
-          if (node.workspacePath) input.workspacePath = node.workspacePath
-          if (node.workspaceId) input.workspaceId = node.workspaceId
-          try {
-            const { shown } = await orca.plugin.request('agent.show', input)
-            setMsg(shown === 'terminal' ? 'Showing the agent terminal.' : shown === 'workspace' ? 'The agent has no terminal to show; opened its workspace.' : 'Found neither the agent nor its workspace.', shown === 'none')
-          } catch (error) { setMsg(error.message ?? String(error), true) }
+        const result = $('resultBox')
+        const attemptKey = node.taskId ?? node.id
+        if (result) result.ontoggle = () => {
+          if (result.open) state.openOutputs.add(attemptKey)
+          else state.openOutputs.delete(attemptKey)
         }
-        if ($('lastLines')) $('lastLines').onclick = async () => {
-          $('lastLines').disabled = true
-          try {
-            const { lines: read } = await orca.plugin.request('step.lines', { dispatchId: node.dispatchId }, { timeoutMs: 90000 })
-            state.lines[key] = read
-            void render()
-          } catch (error) { setMsg(error.message ?? String(error), true); $('lastLines').disabled = false }
+        for (const button of box.querySelectorAll('[data-action]')) {
+          button.onclick = async () => {
+            button.disabled = true
+            await runStepAction(node, button.dataset.action, { place: 'drawer' })
+            button.disabled = false
+          }
         }
       }
 

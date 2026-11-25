@@ -61,6 +61,8 @@ export type StepRun = {
   /** 1 for the first run, +1 for every revise loop that ran the step again. */
   attempt: number
   dispatchId?: string
+  /** The optional native chat adapter can look up this attempt's tab. */
+  chatAvailable?: boolean
   gateId?: string
   /** `popraw` only in runs stored by versions before 0.5.0; it means `revise`. */
   decision?: 'ok' | 'revise' | 'popraw'
@@ -110,6 +112,7 @@ export type RunNode = {
   dispatchId?: string
   workerState?: string
   liveness?: string
+  terminalId?: string
   outcome?: string
   workspacePath?: string
   result?: string
@@ -146,6 +149,15 @@ export type TimelineEvent = {
   lane?: number
   spanStart?: number
   spanEnd?: number
+}
+
+/** A replaced task, as recorded by Orca. Its report does not overwrite the current attempt's file. */
+export type TimelineStep = RunNode & {
+  kind: 'agent' | 'script' | 'gate'
+  chatAvailable?: boolean
+  resultUnavailable?: boolean
+  decision?: StepRun['decision']
+  comment?: string
 }
 
 /** Work a session runs inside itself, as Orca observes it live (`worktree ps` children): background commands, native subagents, workflows. */
@@ -215,9 +227,12 @@ declare module 'orca' {
     /** Everything one conversation started: its agents across its Runs and one timeline of all their work. */
     'session.view': { input: { sessionId: string; runIds: string[] }; output: { agents: SessionAgent[]; events: TimelineEvent[]; lanes: number } }
     /** The timeline of one Orca Run (also a playbook run): tasks, worker starts, reports, gates and decisions. */
-    'run.timeline': { input: { runId: string }; output: { events: TimelineEvent[]; lanes: number } }
+    'run.timeline': { input: { runId: string }; output: { events: TimelineEvent[]; lanes: number; history?: TimelineStep[] } }
     /** The last lines of a worker's transcript. */
     'step.lines': { input: { dispatchId: string }; output: { lines: string[] } }
+    'step.openChat': { input: { runId: string; taskId: string }; output: { opened: boolean } }
+    /** Opens a file named by a current step in its playbook's workspace. */
+    'step.openFile': { input: { runId: string; taskId: string; kind: 'script' | 'result' }; output: { opened: boolean } }
     /** Shows the agent of a step: its terminal when Orca lists one, else its workspace. */
     'agent.show': { input: { terminalId?: string; workspacePath?: string; workspaceId?: string }; output: { shown: 'terminal' | 'workspace' | 'none' } }
     /** Opens a workspace, as clicking it in the sidebar does. */

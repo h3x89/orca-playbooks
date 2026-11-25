@@ -2,7 +2,7 @@
   "manifestVersion": 2,
   "id": "playbooks",
   "name": "Playbooks",
-  "version": "0.5.4",
+  "version": "0.5.5",
   "description": "Workflows of agents and human decision gates kept as YAML in the repository, run through Orca orchestration and drawn as a live graph.",
   "license": "MIT",
   "engines": {
@@ -29,6 +29,13 @@
         "type": "string",
         "default": "",
         "placeholder": "/absolute/path/to/agent-session-domain.db"
+      },
+      {
+        "key": "experimentalOpenChat",
+        "title": "Experimental: Open native chat",
+        "description": "Use Orca’s private local interface to select an existing chat. Tested on Linux with Orca 1.4.274. A newer Orca version may require an update to Playbooks.",
+        "type": "boolean",
+        "default": false
       }
     ],
     "statusBarItems": [

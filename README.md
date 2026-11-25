@@ -161,10 +161,10 @@ Paseo](https://github.com/lerenn/paseo-playbooks#runs-with-no-playbook-manager)
 
 ## Requirements
 
-- Orca **1.4.263 or newer** on macOS. The plugin needs host API 1.10 (`agents.list` with `workspaceId`,
-  first shipped in Orca 1.4.261); it is tested on Orca 1.4.263–1.4.266. Linux and Windows are untested.
-- The `orca` CLI: the plugin uses `/Applications/Orca.app/Contents/Resources/bin/orca` when present,
-  else `orca` on `PATH`.
+- Orca **1.4.263 or newer** with host API 1.10 (`agents.list` with `workspaceId`). This build was tested
+  with Orca 1.4.274 on Ubuntu. Experimental native chat navigation has a separate version requirement.
+- The Orca CLI set by the app in `ORCA_CLI_COMMAND`. If unset, the plugin tries the bundled macOS
+  binary, then `orca` on `PATH`.
 - `python3` for `.py` script steps, and the agents your playbooks name, set up in Orca.
 - Workspaces on this computer only (see Limitations).
 
@@ -238,14 +238,15 @@ Install this plugin only if you trust its code, and start only playbooks from re
   again (at most `max_loops` times, up to 5).
 - The panel lists every local workspace, including cloned repositories of other people: a playbook from
   someone else's repository looks the same as your own.
-- **Last lines** of worker transcripts are shown with a simple mask for strings that look like tokens;
-  take care when sharing screenshots.
-- The plugin has no hooks and changes no Orca or agent settings. Besides the terminals it opens, it
-  writes only to `<repo>/.orca/runs/` and its own plugin storage.
+- **Last lines** of worker transcripts are shown with a simple mask for strings that look like tokens.
+  Take care when sharing screenshots.
+- The opt-in chat adapter reads the local Orca runtime credential to select a tab through Orca's
+  private local Unix socket. The credential stays in the worker. See [Open an agent chat](#open-an-agent-chat-experimental).
+- The plugin has no hooks. It writes run files to `<repo>/.orca/runs/` and saves run state in its own plugin storage.
 
-Capabilities it asks for: `storage:own` (the runs it started), `settings:own` (the optional journal setting),
+Capabilities it asks for: `storage:own` (the runs it started), `settings:own` (optional journal and experimental chat settings),
 `workspace:read` (the workspace in focus
-and the list of workspaces), `workspace:write` (focus an agent's terminal, open a workspace),
+and the list of workspaces), `workspace:write` (open workspaces and files, focus terminals),
 `agent:read` (live agent states), `terminal:send`, `notifications:show`. Orca describes `terminal:send`
 broadly (open and close terminals, type and run commands in your terminals, local and over SSH); the
 plugin uses it only to open the coordinator terminal of each run it starts.
@@ -276,13 +277,30 @@ opened from **Needs you**, the panel returns to the list.
 
 Where the Graph tab has no graph, it says why and how to get one: describe the work as a playbook in
 `.orca/playbooks/` and start it from the panel. Hover over a graph step or focus it from the keyboard
-to see its full name, state, and dependencies it is waiting for. Select a step, a timeline row or an agent to see its
-result, the **Last lines** of its transcript and **Show agent** (focuses its terminal, or opens its
-workspace when Orca no longer lists the terminal).
+to see its full name, state, and dependencies it is waiting for. Select a graph step, a Timeline row
+or an agent to preview its result. **Details** jumps to the step's actions. Depending on the step,
+these include **Open script**, **Open result file**, **View result**, **Last lines**, **Open terminal**
+and **Open decision**. Recorded agent attempts show their report and last lines. Each script attempt
+keeps its own output preview. If an older script attempt has no saved preview, the panel marks it as
+unavailable. Opening a file from the current attempt uses Orca's editor.
 
 A decision card appears above the tabs when a gate waits for you, and a banner when one waits in another
 workspace. Orca notifications and the status bar item say when a run waits for you, fails, is sent back
 or finishes.
+
+### Open an agent chat (experimental)
+
+In **Settings → Plugins → Playbooks → Details**, turn on **Experimental: Open native chat**.
+The setting defaults to off and this adapter works with **Orca 1.4.274 desktop on Linux**.
+It applies to native chats already open on that desktop.
+
+Open a playbook run and choose **Open chat** on an agent's **Graph** card or next to its attempt
+on **Timeline**. After **Revise**, each attempt opens its own chat tab. If the chat tab is closed,
+you can still use **Last lines** or **View result**.
+
+The adapter is a temporary workaround using Orca's private local interface and may need updating
+when Orca changes it. Playbooks will move to a supported action when Orca provides one.
+[Follow the native chat focus request (#42069)](https://github.com/stablyai/orca/issues/42069).
 
 ### First prompt and parallel work
 
