@@ -23,8 +23,9 @@ every commit, branch name, tag, pull request and comment can be read by everyone
 ## Changes
 
 - Work on a branch and open a pull request; do not push to `main`.
-- Before a pull request: `orca plugin validate .` and `orca plugin test .` pass. When you change the
-  panel, look at it narrow (about 240 px) and wide.
+- Before a pull request, run `./scripts/check.sh` and record the result in the PR description.
+  The script runs Orca's plugin validation and tests. When you change the panel, look at it narrow
+  (about 240 px) and wide.
 - Do not add CI workflows, review bots, GitHub Pages or Wiki pages without the maintainer's decision:
   their output is public too.
 
