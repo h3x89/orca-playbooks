@@ -1,0 +1,69 @@
+name: CI
+
+on:
+  pull_request:
+  push:
+    branches: [main]
+  workflow_dispatch:
+    inputs:
+      desktop_smoke:
+        description: Run the desktop smoke test under Xvfb
+        type: boolean
+        default: false
+
+permissions:
+  contents: read
+
+concurrency:
+  group: ${{ github.workflow }}-${{ github.event_name }}-${{ github.ref }}
+  cancel-in-progress: true
+
+jobs:
+  plugin-checks:
+    name: Plugin checks
+    runs-on: ubuntu-24.04
+    timeout-minutes: 10
+    steps:
+      - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
+        with:
+          persist-credentials: false
+
+      - uses: actions/setup-node@949feb2413d6458794dcd2491c4babbbce0c15c1 # v7.1.0
+        with:
+          node-version: '22'
+          package-manager-cache: false
+
+      - name: Install the pinned Orca release
+        shell: bash
+        env:
+          ORCA_VERSION: 1.4.274
+          ORCA_DEB_SHA256: 96a2abd7172ac81338fe280678cdad4bd032c6d1591b11957acecae50ca54188
+        run: |
+          package="$RUNNER_TEMP/orca-ide_${ORCA_VERSION}_amd64.deb"
+          curl --fail --silent --show-error --location --retry 3 \
+            --output "$package" \
+            "https://github.com/stablyai/orca/releases/download/v${ORCA_VERSION}/orca-ide_${ORCA_VERSION}_amd64.deb"
+          printf '%s  %s\n' "$ORCA_DEB_SHA256" "$package" | sha256sum --check --strict
+          sudo apt-get update
+          sudo apt-get install --yes --no-install-recommends "$package" sqlite3
+
+      - name: Validate the plugin and run its tests
+        run: ./scripts/check.sh
+
+      - name: Run a playbook in the Orca desktop app
+        if: github.event_name == 'workflow_dispatch' && inputs.desktop_smoke
+        run: |
+          sudo apt-get install --yes --no-install-recommends xvfb xauth
+          timeout --kill-after=5s 240s xvfb-run -a ./scripts/smoke-desktop.sh "$RUNNER_TEMP/playbooks.png"
+          printf '%s\n' '### Orca desktop smoke' \
+            'Start → Revise → OK passed. One seed, two drafts and one publish after approval.' \
+            'The panel output matched the result on disk.' >> "$GITHUB_STEP_SUMMARY"
+
+      - name: Upload the demo panel screenshot
+        if: github.event_name == 'workflow_dispatch' && inputs.desktop_smoke
+        uses: actions/upload-artifact@cf430e030ddbb5b0abf93d22962f4752f3646cd9 # v7.0.2
+        with:
+          name: playbooks-desktop-smoke
+          path: ${{ runner.temp }}/playbooks.png
+          if-no-files-found: error
+          retention-days: 7

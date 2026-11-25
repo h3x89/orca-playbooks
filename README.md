@@ -162,9 +162,11 @@ Paseo](https://github.com/lerenn/paseo-playbooks#runs-with-no-playbook-manager)
 ## Requirements
 
 - Orca **1.4.263 or newer** with host API 1.10 (`agents.list` with `workspaceId`). This build was tested
-  with Orca 1.4.274 on Ubuntu. Experimental native chat navigation has a separate version requirement.
-- The Orca CLI set by the app in `ORCA_CLI_COMMAND`. If unset, the plugin tries the bundled macOS
-  binary, then `orca` on `PATH`.
+  with the Ubuntu package pinned in CI. Experimental native chat navigation has a separate version
+  requirement.
+- The Orca CLI set by the app in `ORCA_CLI_COMMAND`. If unset, the plugin uses `orca-ide` on Linux
+  and tries the bundled macOS binary before falling back to `orca` elsewhere. On Linux, use
+  `orca-ide` in place of `orca` in the commands below.
 - `python3` for `.py` script steps, and the agents your playbooks name, set up in Orca.
 - Workspaces on this computer only (see Limitations).
 
@@ -411,10 +413,20 @@ any other answer.
 ## Development
 
 ```sh
-orca plugin validate .
-orca plugin test .         # parser, timeline, and full runs against a fake orca CLI (test/fake-orca.mjs)
+./scripts/check.sh         # also runs in GitHub Actions
 orca plugin types .        # writes the Orca typings to .orca/types/
 ```
+
+The checks use the installed Orca CLI (`orca-ide` on Linux), Node.js 22 or later,
+Python 3, Git, and the SQLite CLI. They validate the manifest and example
+playbooks, check BPMN parity, and exercise the parser, timeline, and full runs
+against a fake Orca CLI. The checks run without opening the desktop app.
+
+Run **CI** manually with **Run the desktop smoke test under Xvfb** to try the
+same plugin inside Orca on Ubuntu. The **Revise and publish** demo uses a fresh
+profile and only script steps. It checks that **Revise** reruns the draft,
+publication waits for **OK**, and the final file matches the result in the
+panel. The run includes a screenshot and a summary of the checks.
 
 The repository is public, and so is every commit and pull request: read `AGENTS.md` before changing it.
 
