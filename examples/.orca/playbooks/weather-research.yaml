@@ -1,0 +1,67 @@
+title: Weather research
+description: Parallel research, a draft and independent review, then your decision on a sample weather plan.
+
+steps:
+  - id: forecast
+    title: Research the sample forecast
+    agent: codex
+    keep_open: true
+    prompt: |
+      Sample data for a fictional park: 18°C and a 10% chance of rain.
+      Put the temperature and chance of rain in one sentence in your step report.
+      Work from this prompt and write only the step report. Use no network requests.
+
+  - id: air
+    title: Research the sample air quality
+    agent: codex
+    keep_open: true
+    prompt: |
+      Sample data for the same fictional park: European Air Quality Index (EAQI) 25.
+      Put the index name and value in one sentence in your step report.
+      Work from this prompt and write only the step report. Use no network requests.
+
+  - id: summary
+    title: Combine both reports
+    needs: [forecast, air]
+    script: { run: weather-summary.py, timeout_sec: 15 }
+
+  - id: plan
+    title: Draft a plan for a walk
+    needs: [summary]
+    agent: codex
+    keep_open: true
+    prompt: |
+      Read {{run_dir}}/summary.txt and write a short plan for a walk in the fictional park.
+      Cite the sample temperature, chance of rain, and EAQI. Address any revision comment
+      below and update the plan when a revision was requested. Read only the
+      files named here and write only your step report.
+      Revision comment: {{comment}}
+
+  - id: prepare-review
+    title: Save the plan for review
+    needs: [plan]
+    script: { run: weather-summary.py, timeout_sec: 15 }
+
+  - id: review
+    title: Review the plan independently
+    needs: [prepare-review]
+    agent: codex
+    keep_open: true
+    prompt: |
+      Compare {{run_dir}}/plan-for-review.md with {{run_dir}}/summary.txt. Check that the plan cites
+      all three sample values correctly and stays within what the sample data can tell us.
+      Write PASS or BLOCK on the first line of your step report, followed by one sentence
+      explaining your verdict. Read only the files named here and write only your report.
+
+  - id: decision
+    title: Decide after the review
+    needs: [review]
+    gate:
+      question: Read the plan and review. Choose OK for a passing plan, or Revise with a comment.
+    on:
+      revise: { goto: plan, max_loops: 2 }
+
+  - id: finish
+    title: Show the approved plan
+    needs: [decision]
+    script: { run: weather-summary.py, timeout_sec: 15 }

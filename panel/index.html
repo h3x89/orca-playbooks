@@ -11,12 +11,11 @@
         --card: color-mix(in srgb, var(--fg) 6%, var(--bg));
         --plan: color-mix(in srgb, var(--fg) 30%, transparent);
         --pending: #8a8f98;
-        --ready: #5b8def;
+        --event-start: #88adff;
         --running: #e0a43a;
         --done: #3fb27f;
         --failed: #e5534b;
         --gate: #b57edc;
-        --ask: #f2994a;
       }
       * { box-sizing: border-box; }
       body { margin: 0; padding: 12px; font: 13px system-ui, sans-serif; color: var(--fg); background: var(--bg); }
@@ -32,22 +31,27 @@
       pre { white-space: pre-wrap; word-break: break-word; margin: 6px 0 0; padding: 8px; border-radius: 6px; background: color-mix(in srgb, var(--fg) 4%, var(--bg)); border: 1px solid var(--line); font-size: 11.5px; max-height: 260px; overflow: auto; }
       .row { display: flex; gap: 8px; align-items: center; margin-top: 8px; flex-wrap: wrap; }
       .primary { background: #2f6bf2; border-color: #2f6bf2; color: #fff; }
-      .ok { background: var(--done); border-color: var(--done); color: #fff; }
-      .danger { background: transparent; border-color: var(--failed); color: var(--failed); }
+      .ok { border-color: var(--gate); font-weight: 600; }
       .msg { margin-top: 6px; color: var(--muted); min-height: 14px; white-space: pre-wrap; }
       .err { color: var(--failed); }
-      .badge { font-size: 11px; padding: 2px 8px; border-radius: 10px; border: 1px solid currentColor; font-weight: 500; }
+      h1 .status { font-weight: 500; }
+      .status { display: inline-flex; gap: 5px; align-items: baseline; color: var(--muted); white-space: normal; }
+      .status i { color: var(--status-color); font: inherit; }
+      #runSource { margin-top: 4px; }
       .card { border: 1px solid var(--line); border-radius: 8px; padding: 10px; margin-top: 10px; background: var(--card); }
       .where { display: flex; align-items: center; gap: 8px; justify-content: space-between; flex-wrap: wrap; padding: 6px 8px; border-radius: 8px; background: var(--card); border: 1px solid var(--line); }
       .where > span { min-width: 0; overflow-wrap: anywhere; }
       .where b { font-weight: 600; }
-      .banner { margin-top: 8px; padding: 6px 8px; border-radius: 8px; border: 1px solid var(--gate); color: var(--gate); display: flex; justify-content: space-between; align-items: center; gap: 8px; }
-      .gate { border-color: var(--gate); border-width: 2px; }
-      .gate h2 { font-size: 13px; margin: 0 0 6px; color: var(--gate); }
+      .banner { margin-top: 8px; padding: 6px 8px; border-radius: 8px; border: 1px solid var(--line); display: flex; justify-content: space-between; align-items: center; gap: 8px; }
+      .gate h2 { font-size: 13px; margin: 0 0 6px; }
+      .decision-mark { color: var(--gate); }
       .graph { margin-top: 10px; }
       svg text { fill: var(--fg); font: 12px system-ui, sans-serif; }
       svg .sub { fill: var(--muted); font-size: 11px; }
       svg g.node { cursor: pointer; }
+      svg g.node:focus-visible { outline: none; }
+      svg g.node:focus-visible .node-box { stroke: var(--fg); stroke-width: 2.5px; }
+      #graphTooltip { position: fixed; z-index: 2; pointer-events: none; max-width: min(280px, calc(100vw - 16px)); padding: 7px 9px; border: 1px solid var(--line); border-radius: 6px; color: var(--fg); background: var(--bg); box-shadow: 0 2px 10px #0003; font-size: 12px; overflow-wrap: anywhere; }
       details summary { cursor: pointer; color: var(--muted); font-size: 11.5px; margin-top: 3px; }
       .muted { color: var(--muted); }
       .small { font-size: 11px; }
@@ -61,14 +65,21 @@
       .tl-row { display: grid; grid-template-columns: auto 34px 14px minmax(0, 1fr) auto; gap: 5px; align-items: start; padding: 3px 8px; font-size: 12px; cursor: default; }
       .tl-text { min-width: 0; overflow-wrap: anywhere; display: -webkit-box; -webkit-box-orient: vertical; -webkit-line-clamp: 2; line-clamp: 2; overflow: hidden; }
       .tl-row[data-task] { cursor: pointer; }
-      .tl-row.first-prompt { background: color-mix(in srgb, var(--ready) 12%, var(--bg)); }
+      .tl-row.first-prompt { background: var(--card); }
+      .tl-row.sent-back { background: color-mix(in srgb, var(--gate) 10%, var(--bg)); }
+      .tl-row.sent-back .tl-icon { font-size: 15px; font-weight: 700; line-height: 1; }
       #timelineHelp { font-size: 11px; color: var(--muted); margin-top: 6px; }
       #timelineHelp p { margin: 4px 0; line-height: 1.4; }
+      .tl-key { display: flex; flex-wrap: wrap; gap: 5px 10px; margin-top: 5px; }
+      .tl-key span { display: inline-flex; gap: 4px; align-items: center; }
       .start-time { color: var(--muted); font-size: 11px; }
-      .tl-row.sel { background: var(--card); }
+      .tl-row.sel { outline: 1px solid var(--muted); outline-offset: -1px; }
       .tl-gap { padding: 2px 8px 2px 60px; color: var(--muted); font-size: 11px; font-style: italic; }
       .lanes { display: inline-flex; gap: 2px; height: 16px; }
-      .lanes i { display: inline-block; width: 4px; height: 16px; border-radius: 2px; }
+      .lane-slot { display: inline-grid; place-items: center; width: 5px; height: 16px; }
+      .lane-bar { display: inline-block; width: 2px; height: 12px; border-radius: 2px; background: color-mix(in srgb, var(--fg) 42%, var(--bg)); }
+      .lane-bar.own { width: 5px; background: var(--muted); }
+      .lane-bar.working { background: var(--running); }
       .tl-time, .tl-dur { color: var(--muted); font-variant-numeric: tabular-nums; white-space: nowrap; }
       .tl-dur { font-size: 11px; }
       /* In a narrow panel the duration goes under the text, so the text keeps the width. */
@@ -78,15 +89,16 @@
         .tl-dur:empty { display: none; }
       }
       #sessionView, #agentsList { container-type: inline-size; }
-      @container (max-width: 360px) {
-        .srow { grid-template-columns: 14px minmax(0, 1fr); }
-        .srow > span:last-child { grid-column: 2; }
-      }
       .tree { margin-top: 10px; }
-      .srow { display: grid; grid-template-columns: 14px minmax(0, 1fr) auto; gap: 6px; padding: 5px 6px; border-radius: 6px; cursor: pointer; }
+      .srow { display: grid; grid-template-columns: minmax(0, 1fr) auto; gap: 5px 8px; padding: 5px 6px; border-radius: 6px; cursor: pointer; }
       .srow > span { min-width: 0; overflow-wrap: anywhere; }
       .srow:hover, .srow.sel { background: var(--card); }
-      .srow .dot { width: 9px; height: 9px; border-radius: 50%; margin-top: 4px; }
+      @container (max-width: 360px) {
+        .srow { grid-template-columns: minmax(0, 1fr); }
+      }
+      #agentsList .agent-row { grid-template-columns: 9px minmax(0, 1fr) minmax(0, auto); }
+      .agent-dot { width: 7px; height: 7px; border-radius: 50%; margin-top: 4px; background: var(--status-color); }
+      .agent-state { color: var(--muted); text-align: right; max-width: 9em; overflow-wrap: anywhere; }
       .indent { margin-left: 16px; border-left: 1px solid var(--line); padding-left: 6px; }
       .legend { display: flex; gap: 10px; flex-wrap: wrap; margin-top: 6px; font-size: 11px; color: var(--muted); }
       .legend i { display: inline-block; width: 9px; height: 9px; border-radius: 2px; margin-right: 4px; vertical-align: -1px; }
@@ -112,6 +124,7 @@
 
     <label for="run">Run or conversation</label>
     <select id="run"></select>
+    <div id="runSource" class="muted small"></div>
     <div id="indexNote" class="muted small" style="margin-top:4px"></div>
     <div id="gate"></div>
     <div id="sessionView"></div>
@@ -119,22 +132,30 @@
     <div id="graphNote"></div>
     <div class="graph" id="graphWrap"><svg id="graph" width="10" height="10"></svg></div>
     <details id="timelineHelp" hidden>
-      <summary>What are the bars?</summary>
-      <p>Each column tracks a task and can be reused. The bright bar marks this row’s task.
-        Faded bars mark other tasks still in progress. When more than eight tracks are needed,
-        the last column combines the extra tracks.</p>
+      <summary>What do the bars show?</summary>
+      <div class="tl-key">
+        <span><i class="lane-bar own" aria-hidden="true"></i> This row’s step</span>
+        <span><i class="lane-bar" aria-hidden="true"></i> Other step at that time</span>
+        <span><i class="lane-bar own working" aria-hidden="true"></i> Working now</span>
+      </div>
+      <p>Each column can hold another step when the previous one ends. Rows without recorded work
+        for their own step, such as a gate or a decision, leave its bar empty. Hover over the bars
+        for step names. Above eight columns, the last one combines the rest.</p>
     </details>
     <div id="timeline"></div>
     <div id="agentsList"></div>
     <div id="drawer"></div>
-    <div class="legend">
-      <span><i style="background:var(--pending)"></i>waiting for earlier steps</span>
-      <span><i style="background:var(--running)"></i>working</span>
-      <span><i style="background:var(--ask)"></i>agent waits for permission</span>
-      <span><i style="background:var(--gate)"></i>waiting for you</span>
-      <span><i style="background:var(--done)"></i>done</span>
-      <span><i style="background:var(--failed)"></i>failed / sent back</span>
-    </div>
+    <details id="statusKey" class="small">
+      <summary>Status key</summary>
+      <div class="legend">
+        <span><i style="background:var(--pending)"></i>planned, waiting for a step, or superseded</span>
+        <span><i style="background:var(--running)"></i>working</span>
+        <span><i style="background:var(--gate)"></i>human decision, permission, or Revise</span>
+        <span><i style="background:var(--done)"></i>done</span>
+        <span><i style="background:var(--failed)"></i>failed</span>
+      </div>
+    </details>
+    <div id="graphTooltip" role="tooltip" hidden></div>
     <div id="footer" class="muted small" style="margin-top:8px; overflow-wrap:anywhere"></div>
 
     <script>
@@ -146,23 +167,29 @@
       }
       const STATUS = {
         pending: ['waiting for earlier steps', 'var(--pending)'],
-        ready: ['ready', 'var(--ready)'],
+        ready: ['ready', 'var(--pending)'],
         dispatched: ['working', 'var(--running)'],
         blocked: ['waiting', 'var(--pending)'],
         waiting: ['waiting for you', 'var(--gate)'],
         completed: ['done', 'var(--done)'],
-        failed: ['failed', 'var(--failed)']
+        failed: ['failed', 'var(--failed)'],
+        superseded: ['superseded', 'var(--pending)'],
+        'sent-back': ['sent back · Revise', 'var(--gate)']
       }
       const LIVE = {
         working: ['working', 'var(--running)'],
-        blocked: ['waits for permission ↗', 'var(--ask)'],
-        waiting: ['waits for an answer ↗', 'var(--ask)']
+        blocked: ['waits for permission ↗', 'var(--gate)'],
+        waiting: ['waits for an answer ↗', 'var(--gate)']
       }
       const RUN = { running: 'running', waiting: 'waiting for you', done: 'finished', failed: 'failed', rejected: 'sent back' }
-      const RUN_COLOR = { running: 'var(--running)', waiting: 'var(--gate)', done: 'var(--done)', failed: 'var(--failed)', rejected: 'var(--failed)' }
+      const RUN_COLOR = { running: 'var(--running)', waiting: 'var(--gate)', done: 'var(--done)', failed: 'var(--failed)', rejected: 'var(--gate)' }
 
       function esc(value) {
         return String(value ?? '').replace(/[&<>"']/g, (c) => ({ '&': '&amp;', '<': '&lt;', '>': '&gt;', '"': '&quot;', "'": '&#39;' })[c])
+      }
+
+      function statusText(label, color) {
+        return `<span class="status small" style="--status-color:${color ?? 'var(--pending)'}"><i aria-hidden="true">●</i>${esc(label)}</span>`
       }
       function cut(value, max) { return value.length > max ? value.slice(0, max - 1) + '…' : value }
       function setMsg(text, error) {
@@ -228,7 +255,7 @@
         $('pickWrap').style.display = !state.pinned && !state.following ? '' : 'none'
         $('workspace').replaceChildren(...state.workspaces.map((w) => option(w.id, `${w.name}${w.branch ? ' · ' + w.branch : ''} — ${w.path}`, w.id === state.workspaceId)))
         $('banner').innerHTML = state.waitingElsewhere.map((w) =>
-          `<div class="banner"><span>◆ ${esc(w.title)} waits for you in <b>${esc(w.workspaceName)}</b></span><button class="small" data-goto="${esc(w.workspaceId)}">Go</button></div>`).join('')
+          `<div class="banner"><span><span class="decision-mark" aria-hidden="true">◆</span> ${esc(w.title)} waits for you in <b>${esc(w.workspaceName)}</b></span><button class="small" data-goto="${esc(w.workspaceId)}">Go</button></div>`).join('')
         for (const button of $('banner').querySelectorAll('button[data-goto]')) {
           button.onclick = () => orca.plugin.request('workspace.goto', { workspaceId: button.dataset.goto }).catch((error) => setMsg(error.message ?? String(error), true))
         }
@@ -263,8 +290,8 @@
 
       const SESSION = {
         working: ['working', 'var(--running)'],
-        blocked: ['waits for permission', 'var(--ask)'],
-        permission: ['waits for permission', 'var(--ask)'],
+        blocked: ['waits for permission', 'var(--gate)'],
+        permission: ['waits for permission', 'var(--gate)'],
         waiting: ['waiting for you', 'var(--gate)'],
         done: ['finished', 'var(--done)'],
         active: ['active', 'var(--running)'],
@@ -287,17 +314,18 @@
       function viewNodes() {
         const run = playbookRun()
         if (run) {
+          const titles = Object.fromEntries(run.steps.map((step) => [step.id, step.title]))
           return run.steps.map((step) => {
             const task = run.tasks[step.id]
             let [label, color] = !task ? ['plan', 'var(--plan)']
               : step.kind === 'gate' && task.gateId && !task.decision ? STATUS.waiting
-              : step.kind === 'gate' && task.decision && task.decision !== 'ok' ? ['sent back', 'var(--failed)']
+              : step.kind === 'gate' && task.decision && task.decision !== 'ok' ? STATUS['sent-back']
               : STATUS[task.status] ?? [task.status, 'var(--pending)']
             if (task?.live && LIVE[task.live.state]) [label, color] = LIVE[task.live.state]
             const sub = step.kind === 'gate' ? 'gate · your decision' : step.kind === 'script' ? `script · ${step.run}` : [step.agent, step.model].filter(Boolean).join(' · ')
             return { id: step.id, title: step.title, sub, label, color, needs: step.needs, depth: step.depth, kind: step.kind, loop: step.loop,
               attempt: task?.attempt ?? 1, live: task?.live, since: task?.live?.since ?? task?.startedAt, dispatchId: task?.dispatchId && task.dispatchId !== 'failed' && task.dispatchId !== 'started' ? task.dispatchId : null,
-              workspaceId: run.workspaceId, status: task?.status, startedAt: task?.startedAt, endedAt: task?.endedAt, result: task?.output, error: task?.error, decision: task?.decision, comment: task?.comment, waitingFor: step.needs.filter((need) => run.tasks[need]?.status !== 'completed') }
+              workspaceId: run.workspaceId, status: task?.status, startedAt: task?.startedAt, endedAt: task?.endedAt, result: task?.output, error: task?.error, decision: task?.decision, comment: task?.comment, waitingFor: step.needs.filter((need) => run.tasks[need]?.status !== 'completed').map((need) => titles[need] ?? need) }
           })
         }
         const runId = orcaRunId()
@@ -307,7 +335,7 @@
           let [label, color] = STATUS[node.status] ?? [node.status, 'var(--pending)']
           if (node.live && LIVE[node.live.state]) [label, color] = LIVE[node.live.state]
           return { id: node.id, title: node.title, sub: [node.agent, node.model, node.effort].filter(Boolean).join(' · ') || 'task', label, color, needs: node.needs, depth: node.depth, kind: 'agent',
-            attempt: 1, live: node.live, since: node.live?.since, dispatchId: node.dispatchId, workspacePath: node.workspacePath, result: node.result, status: node.status, startedAt: node.createdAt,
+            attempt: node.attempt, live: node.live, since: node.live?.since, dispatchId: node.dispatchId, workspacePath: node.workspacePath, result: node.result, status: node.status, startedAt: node.createdAt,
             outcome: node.outcome, waitingFor: node.needs.filter((need) => nodes.find((n) => n.id === need)?.status !== 'completed').map((need) => titles[need] ?? need) }
         })
       }
@@ -353,12 +381,15 @@
         const kind = session ? 'session' : run ? 'playbook' : runId ? 'orca' : 'preview'
         const playbook = state.playbooks.find((p) => p.file === $('playbook').value)
         $('description').textContent = playbook?.description ?? ''
-        $('runBadge').innerHTML = run ? `<span class="badge" style="color:${RUN_COLOR[run.status] ?? 'inherit'}">${esc(RUN[run.status] ?? run.status)}</span>` : ''
+        $('runBadge').innerHTML = run ? statusText(RUN[run.status] ?? run.status, RUN_COLOR[run.status]) : ''
         if (!state.sel && playbook?.errors?.length) setMsg('Errors in the file:\n' + playbook.errors.join('\n'), true)
         const sessionView = key ? state.sessionViews[key] : null
         const nodes = kind === 'session' ? (sessionView?.agents ?? []).map(agentNode)
           : kind === 'preview' ? (playbook?.steps ?? []).map((step) => ({ id: step.id, title: step.title, sub: step.kind === 'gate' ? 'gate' : step.kind === 'script' ? `script · ${step.run}` : [step.agent, step.model].filter(Boolean).join(' · '), label: 'plan', color: 'var(--plan)', needs: step.needs, depth: step.depth, kind: step.kind, loop: step.loop, attempt: 1 }))
           : viewNodes()
+        const agentLed = runId && state.orcaRuns.find((candidate) => candidate.id === runId)?.coordinatedByAgent
+        const source = agentLed && !nodes.some((node) => node.attempt !== undefined) ? 'Agent-led run' : 'Orca Run'
+        $('runSource').textContent = { playbook: 'YAML playbook', orca: source, session: 'Conversation', preview: playbook ? 'Playbook plan' : '' }[kind]
         const agents = kind === 'session' ? groupWorkers(nodes) : nodes.filter((node) => node.kind === 'agent' && (kind === 'playbook' || node.dispatchId))
         const view = kind === 'preview' ? 'graph' : state.view ?? defaultView(kind, nodes)
         renderTabs(kind, view, kind === 'session' && !sessionView ? null : agents.length)
@@ -366,6 +397,8 @@
         else $('sessionView').innerHTML = ''
         const note = view === 'graph' ? graphNote(kind, nodes) : ''
         $('graphWrap').style.display = view === 'graph' && !note ? '' : 'none'
+        if (view !== 'graph' || note) hideGraphTooltip()
+        $('statusKey').hidden = !nodes.length && !run
         $('graphNote').innerHTML = note ? `<div class="card muted">${note}</div>` : ''
         if (view !== 'timeline') $('timeline').innerHTML = ''
         $('timelineHelp').hidden = view !== 'timeline' || !state.timelines[key ?? run?.id ?? runId]?.lanes
@@ -373,13 +406,12 @@
         if (view === 'graph' && !note) drawGraph(nodes, run)
         else if (view === 'agents') renderAgents(agents, kind === 'session' && !sessionView)
         else if (view === 'timeline' && kind === 'session') {
-          if (sessionView) renderTimeline(key, null)
-          else if (session.firstPromptAt !== undefined) renderTimeline(key, null)
+          if (sessionView || session.firstPromptAt !== undefined) renderTimeline(key, null, nodes)
           else $('timeline').innerHTML = ''
         } else if (view === 'timeline') {
           const anyRun = run?.id ?? runId
           if (!state.timelines[anyRun]) {
-            renderTimeline(anyRun, run)
+            renderTimeline(anyRun, run, nodes)
             await loadTimeline(anyRun)
             if (state.sel !== wanted || (state.view !== null && state.view !== 'timeline')) return
           } else if (state.stale.has(anyRun)) {
@@ -387,7 +419,7 @@
             state.stale.delete(anyRun)
             void loadTimeline(anyRun).then(() => { if (state.sel === wanted) void render() })
           }
-          renderTimeline(anyRun, run)
+          renderTimeline(anyRun, run, nodes)
         }
         renderGate(run)
         renderDrawer(nodes, note ? '' : view === 'graph' ? 'Click a step on the graph to see its agent, last lines and result.' : 'Click a timeline row or an agent to see its result and last lines.')
@@ -395,7 +427,7 @@
         $('footer').innerHTML = session
           ? `Orca conversation: <code>${esc(session.id)}</code>${session.runIds?.length ? ` · Runs: ${session.runIds.map((id) => `<code>${esc(id)}</code>`).join(', ')}` : ''} · agents linked by their tasks' <code>creator_orca_session_id</code>`
           : run ? `Orca Run: <code>${esc(run.id)}</code> · revise loops: ${run.loops} · results: <code>${esc(run.runDir)}</code>`
-          : runId ? `Orca Run: <code>${esc(runId)}</code> · started by a coordinating agent, not by a playbook`
+          : runId ? `Orca Run: <code>${esc(runId)}</code>`
           : nodes.length ? 'Plan preview: press Start to run it.' : ''
       }
 
@@ -424,8 +456,8 @@
         }
       }
 
-      const ICON = { 'first-prompt': '●', 'follow-up': '↻', created: '＋', started: '▶', done: '✓', failed: '✗', report: '✉', question: '?', escalation: '!', message: '✉', gate: '◆', decision: '◆' }
-      const KIND_COLOR = { 'first-prompt': 'var(--ready)', 'follow-up': 'var(--running)', started: 'var(--running)', done: 'var(--done)', failed: 'var(--failed)', report: 'var(--done)', question: 'var(--ask)', escalation: 'var(--failed)', gate: 'var(--gate)', decision: 'var(--gate)' }
+      const ICON = { 'first-prompt': '●', 'follow-up': '↻', created: '＋', started: '▶', done: '✓', failed: '✗', superseded: '–', 'sent-back': '↶', report: '✉', question: '?', escalation: '!', message: '✉', gate: '◆', decision: '◆' }
+      const KIND_COLOR = { started: 'var(--event-start)', done: 'var(--done)', failed: 'var(--failed)', 'sent-back': 'var(--gate)', question: 'var(--gate)', escalation: 'var(--gate)', gate: 'var(--gate)', decision: 'var(--gate)' }
       function eventText(event) {
         switch (event.kind) {
           case 'created': return `Task: ${event.title}`
@@ -433,6 +465,8 @@
           case 'started': return `Start: ${event.title}`
           case 'done': return `End: ${event.title}`
           case 'failed': return `Failed: ${event.title}`
+          case 'superseded': return `Superseded: ${event.title}`
+          case 'sent-back': return `Sent back · Revise: ${event.title}`
           case 'report': return `Report: ${event.detail ?? event.title}`
           case 'question': return `Question: ${event.title}`
           case 'escalation': return `Escalation: ${event.title}`
@@ -443,7 +477,7 @@
       }
 
       // Top-down timeline, newest at the bottom like a chat: one row per event, lanes on the left show who worked in parallel.
-      function renderTimeline(runId, run) {
+      function renderTimeline(runId, run, nodes) {
         const box = $('timeline')
         const firstPromptAt = runId.startsWith('ses:') ? selectedSession()?.firstPromptAt : undefined
         if (!state.timelines[runId] && firstPromptAt === undefined) {
@@ -459,9 +493,17 @@
         if (!events.length) { box.innerHTML = '<div class="muted small" style="margin-top:8px">Orca has no recorded events for this yet.</div>'; return }
         const MAX = 8
         const lanes = Math.min(timeline.lanes, MAX)
+        const working = nodes.filter((node) => node.live ? node.live.state === 'working' : node.status === 'dispatched')
+        const workingIds = new Set(working.map((node) => run ? run.tasks[node.id]?.taskId : node.id))
         const spans = {}
-        for (const event of events) if (event.lane !== undefined && event.spanStart !== undefined) spans[event.taskId] = { lane: Math.min(event.lane, MAX - 1), title: event.title, start: event.spanStart, end: event.spanEnd ?? Number.POSITIVE_INFINITY }
-        const activeAt = (at) => Object.values(spans).filter((item) => item.start <= at && at <= item.end)
+        for (const event of events) if (event.lane !== undefined && event.spanStart !== undefined) {
+          spans[event.taskId] = {
+            taskId: event.taskId, lane: Math.min(event.lane, MAX - 1), title: event.title, start: event.spanStart,
+            end: event.spanEnd ?? Number.POSITIVE_INFINITY,
+            working: event.spanEnd === undefined && workingIds.has(event.taskId)
+          }
+        }
+        const activeAt = (at) => Object.values(spans).filter((item) => item.start <= at && at < item.end)
         const taskToNode = (taskId) => {
           if (!run) return taskId
           const entry = Object.entries(run.tasks).find(([, task]) => task.taskId === taskId)
@@ -472,7 +514,9 @@
         const last = events[events.length - 1].at
         const manyDays = dayOf(first) !== dayOf(last)
         const range = first === last ? time(first) : `${time(first)} → ${manyDays ? time(last) : clock(last)}`
-        let html = `<div class="tl-head">${esc(range)}${timeline.lanes ? ` · peak: ${timeline.lanes} parallel ${timeline.lanes === 1 ? 'task' : 'tasks'}` : ''}</div>`
+        const workingNow = Object.values(spans).filter((item) => item.working).length
+        const overlap = timeline.lanes > 1 ? ` · Up to ${timeline.lanes} steps at once` : ''
+        let html = `<div class="tl-head">${esc(range)}${overlap}${workingNow ? ` · ${workingNow} working now` : ''}</div>`
         let previous = null
         for (const event of events) {
           if (manyDays && (!previous || dayOf(previous.at) !== dayOf(event.at))) html += `<div class="tl-gap" style="padding-left:8px;font-style:normal;font-weight:600">${esc(dayOf(event.at))}</div>`
@@ -482,19 +526,28 @@
             html += `<div class="tl-gap">⋯ ${esc(span(event.at - previous.at) + context)}</div>`
           }
           const active = activeAt(event.at)
+          const ownSpan = spans[event.taskId]
+          const hasOwn = ownSpan && ownSpan.start <= event.at && event.at <= ownSpan.end
+          const otherSteps = active.filter((item) => item.taskId !== event.taskId)
+          const laneNames = [
+            hasOwn ? `This row: ${ownSpan.title}${ownSpan.working ? ' · working now' : ''}` : '',
+            otherSteps.length ? `Other steps at this time: ${otherSteps.map((item) => item.working ? `${item.title} · working now` : item.title).join(', ')}` : ''
+          ].filter(Boolean).join('. ')
           let bars = ''
           for (let lane = 0; lane < lanes; lane += 1) {
-            const own = event.lane !== undefined && Math.min(event.lane, MAX - 1) === lane
-            const names = [...new Set(active.filter((item) => item.lane === lane).map((item) => item.title))]
-            if (own && !names.includes(event.title)) names.unshift(event.title)
-            const color = own ? (KIND_COLOR[event.kind] ?? 'var(--pending)') : names.length ? 'color-mix(in srgb, var(--running) 45%, transparent)' : 'transparent'
-            bars += `<i style="background:${color}"${names.length ? ` title="${esc(names.join(' · '))}"` : ''}></i>`
+            const own = hasOwn && ownSpan.lane === lane
+            const overlapping = otherSteps.filter((item) => item.lane === lane)
+            const working = own ? ownSpan.working : overlapping.some((item) => item.working)
+            const bar = own || overlapping.length ? `<i class="lane-bar${own ? ' own' : ''}${working ? ' working' : ''}"></i>` : ''
+            bars += `<span class="lane-slot">${bar}</span>`
           }
           const node = event.taskId ? taskToNode(event.taskId) : null
           const selected = node && state.selected === node
-          const detail = event.kind === 'decision' || event.kind === 'report' ? '' : event.detail
-          html += `<div class="tl-row${selected ? ' sel' : ''}${event.kind === 'first-prompt' ? ' first-prompt' : ''}"${node ? ` data-task="${esc(node)}"` : ''}><span class="lanes" aria-hidden="true">${bars}</span>` +
-            `<span class="tl-time">${esc(clock(event.at))}</span><span style="color:${KIND_COLOR[event.kind] ?? 'var(--muted)'}">${ICON[event.kind] ?? '·'}</span>` +
+          const detail = [event.attempt > 1 ? `attempt ${event.attempt}` : '', event.kind === 'decision' || event.kind === 'report' ? '' : event.detail].filter(Boolean).join(' · ')
+          const emphasis = ['first-prompt', 'sent-back'].includes(event.kind) ? ` ${event.kind}` : ''
+          const iconColor = event.kind === 'started' && ownSpan?.working ? 'var(--muted)' : KIND_COLOR[event.kind] ?? 'var(--muted)'
+          html += `<div class="tl-row${selected ? ' sel' : ''}${emphasis}"${node ? ` data-task="${esc(node)}"` : ''}><span class="lanes"${laneNames ? ` role="img" aria-label="${esc(laneNames)}" title="${esc(laneNames)}"` : ' aria-hidden="true"'}>${bars}</span>` +
+            `<span class="tl-time">${esc(clock(event.at))}</span><span class="tl-icon" style="color:${iconColor}">${ICON[event.kind] ?? '·'}</span>` +
             `<span class="tl-text" title="${esc(eventText(event) + (detail ? ` · ${detail}` : ''))}">${esc(cut(eventText(event), 200))}${detail ? `<span class="muted small"> · ${esc(cut(detail, 120))}</span>` : ''}</span>` +
             `<span class="tl-dur">${event.duration !== undefined ? esc(span(event.duration)) : ''}</span></div>`
           previous = event
@@ -516,7 +569,7 @@
       function sessionStatus(session) {
         if (session.workingMode === 'monitoring' || (session.state === 'working' && session.mainState === 'done')) return ['waiting for its helpers', 'var(--running)']
         if (session.state === 'working') return ['working', 'var(--running)']
-        if (session.state === 'blocked' || session.state === 'permission') return ['waits for permission', 'var(--ask)']
+        if (session.state === 'blocked' || session.state === 'permission') return ['waits for permission', 'var(--gate)']
         if (session.state === 'waiting') return ['waiting for you', 'var(--gate)']
         if (session.state === 'done') return [`waiting for you · last reply ${clock(session.mainSince ?? session.since ?? Date.now())}`, 'var(--gate)']
         return SESSION[session.state] ?? [session.state, 'var(--pending)']
@@ -586,12 +639,12 @@
         const failed = state.timelineErrors[key]
         const [label, color] = sessionStatus(session)
         const live = [...helpers(session).filter((item) => item.state !== 'done').map((item) => ({ kind: 'helper', description: item.title, state: item.state, since: item.since })), ...session.children]
-        let head = `<div class="tree"><div class="srow"><span class="dot" style="background:${color}"></span>` +
+        let head = '<div class="tree"><div class="srow">' +
           `<span><b>${esc(cut(session.title, 60))}</b> <span class="muted small">${esc(session.agent ?? '')}</span>${session.firstPromptAt !== undefined ? `<div class="start-time">First prompt ${timestamp(session.firstPromptAt)}</div>` : ''}${session.tool ? `<div class="muted small">${esc(cut(session.tool + (session.toolInput ? ' · ' + session.toolInput : ''), 110))}</div>` : ''}</span>` +
-          `<span class="small" style="color:${color}">${esc(label)}</span></div>`
-        if (live.length) head += live.map((child) => `<div class="srow indent"><span class="dot" style="background:${child.state === 'working' ? 'var(--running)' : 'var(--pending)'}"></span>` +
+          `${statusText(label, color)}</div>`
+        if (live.length) head += live.map((child) => '<div class="srow indent">' +
           `<span>${esc(child.kind === 'helper' ? '● helper' : CHILD[child.kind] ?? child.kind)}${child.description ? ` <span class="muted small">· ${esc(cut(child.description, 80))}</span>` : ''}</span>` +
-          `<span class="small muted">${esc(child.state === 'working' ? 'working' : child.state ?? '')}${child.since ? ' · ' + esc(ago(child.since)) : ''}</span></div>`).join('')
+          `${statusText([child.state, child.since ? ago(child.since) : ''].filter(Boolean).join(' · '), child.state === 'working' ? 'var(--running)' : 'var(--pending)')}</div>`).join('')
         if (failed && !view) head += `<div class="err small" style="margin-top:6px">Could not load the agents of this conversation: ${esc(failed)}</div>`
         else if (!view) head += `<div class="muted small" style="margin-top:6px">Loading ${session.agents ? esc(agentsWord(session.agents)) : 'the agents'} of this conversation…</div>`
         else if (!view.agents.length) head += '<div class="muted small" style="margin-top:6px">This conversation started no agents through Orca orchestration.</div>'
@@ -606,25 +659,59 @@
         const working = (node) => Number(!!node.live || node.status === 'dispatched')
         const order = [...agents].sort((a, b) => working(b) - working(a) || (b.startedAt ?? 0) - (a.startedAt ?? 0))
         const shown = state.showAllAgents ? order : order.slice(0, 12)
-        const rows = shown.map((node) => `<div class="srow${state.selected === node.id ? ' sel' : ''}" data-agent="${esc(node.id)}"><span class="dot" style="background:${node.color}"></span>` +
-          `<span>${esc(cut(node.title, 46))}<div class="muted small">${esc(node.sub)}</div>` +
+        const rows = shown.map((node) => `<div class="srow agent-row${state.selected === node.id ? ' sel' : ''}" data-agent="${esc(node.id)}">` +
+          `<i class="agent-dot" aria-hidden="true" style="--status-color:${node.color ?? 'var(--pending)'}"></i>` +
+          `<span title="${esc(node.title)}">${esc(cut(node.title, 46))}<div class="muted small">${esc(node.sub)}</div>` +
           (node.startedAt === undefined && !node.rounds ? '' : `<div class="start-time">${node.startedAt === undefined ? '' : `Started ${timestamp(node.startedAt)}`}` +
           (node.rounds > 1 ? `${node.startedAt === undefined ? '' : ' · '}${node.rounds} rounds` : node.startedAt && node.endedAt ? ` · ${esc(span(node.endedAt - node.startedAt))}` : '') + '</div>') +
-          `</span><span class="small" style="color:${node.color}">${esc(node.label)}</span></div>`).join('')
+          `</span><span class="agent-state small">${esc(node.label)}</span></div>`).join('')
         const more = order.length > shown.length ? `<div class="row"><button id="allAgents" class="small">Show all (${order.length})</button></div>` : ''
         $('agentsList').innerHTML = `<div class="tree">${rows}${more}</div>`
         for (const element of $('agentsList').querySelectorAll('.srow[data-agent]')) element.onclick = () => { state.selected = state.selected === element.dataset.agent ? null : element.dataset.agent; void render() }
         if ($('allAgents')) $('allAgents').onclick = () => { state.showAllAgents = true; void render() }
       }
 
+      function graphStatus(node) {
+        return [node.label, node.attempt > 1 ? `attempt ${node.attempt}` : ''].filter(Boolean).join(' · ')
+      }
+
+      function waitReason(node) {
+        return node.waitingFor?.length && ['pending', 'blocked', 'ready', undefined].includes(node.status) && !node.live
+          ? `Waits for ${node.waitingFor.join(', ')}`
+          : ''
+      }
+
+      let tooltipAnchor
+      function hideGraphTooltip() { tooltipAnchor = undefined; $('graphTooltip').hidden = true }
+
+      function positionGraphTooltip() {
+        if (!tooltipAnchor) return
+        const tooltip = $('graphTooltip')
+        const rect = tooltipAnchor.getBoundingClientRect()
+        if (!tooltipAnchor.isConnected || rect.bottom <= 0 || rect.top >= innerHeight) { hideGraphTooltip(); return }
+        const below = rect.bottom + 5
+        tooltip.style.left = `${Math.max(8, Math.min(rect.left, innerWidth - tooltip.offsetWidth - 8))}px`
+        tooltip.style.top = `${Math.max(8, below + tooltip.offsetHeight <= innerHeight - 8 ? below : rect.top - tooltip.offsetHeight - 5)}px`
+      }
+
+      function showGraphTooltip(group, node) {
+        const tooltip = $('graphTooltip')
+        const info = [node.sub, graphStatus(node), waitReason(node)].filter(Boolean)
+        tooltip.innerHTML = `<strong>${esc(node.title)}</strong>` + info.map((line) => `<div class="muted">${esc(line)}</div>`).join('')
+        tooltipAnchor = group
+        tooltip.hidden = false
+        positionGraphTooltip()
+      }
+
       // Top-down graph that fits the narrow right sidebar: one row per depth, steps of a row side by side.
       function drawGraph(nodes, run) {
         const svg = $('graph')
-        if (!nodes.length) { svg.setAttribute('width', 10); svg.setAttribute('height', 10); svg.removeAttribute('style'); svg.innerHTML = ''; return }
+        if (!nodes.length) { hideGraphTooltip(); svg.setAttribute('width', 10); svg.setAttribute('height', 10); svg.removeAttribute('style'); svg.innerHTML = ''; delete svg.dataset.markup; return }
         // At most two cards side by side, so many steps of one stage wrap instead of shrinking to unreadable text. Steps of the
         // same stage (they can run at the same time) sit inside one dashed frame labelled "parallel · N", so a wrapped third
         // step does not look like a later stage.
-        const W = 172, H = 62, GX = 16, GY = 34, PAD = 8, LOOP = 70, MAX = 2, FRAME = 16
+        const narrow = $('graphWrap').clientWidth < 320
+        const W = 172, H = 62, GX = 16, GY = 34, PAD = 18, LOOP = narrow ? 50 : 70, MAX = narrow ? 1 : 2, FRAME = 16
         const byDepth = {}
         for (const node of nodes) (byDepth[node.depth] ??= []).push(node)
         const rows = []
@@ -645,9 +732,9 @@
         const hasLoop = nodes.some((node) => node.kind === 'gate' && node.loop)
         const width = PAD * 2 + inner + (hasLoop ? LOOP : 0)
         const pos = {}
-        for (const row of rows) {
+        for (const [rowIndex, row] of rows.entries()) {
           const used = row.list.length * W + (row.list.length - 1) * GX
-          row.list.forEach((node, index) => { pos[node.id] = { x: PAD + (inner - used) / 2 + index * (W + GX), y: row.y } })
+          row.list.forEach((node, index) => { pos[node.id] = { x: PAD + (inner - used) / 2 + index * (W + GX), y: row.y, rowIndex } })
         }
         const height = y - GY + PAD
         svg.setAttribute('width', width)
@@ -656,7 +743,7 @@
         svg.setAttribute('style', `width:100%;max-width:${width}px;height:auto`)
         let html = '<defs>' +
           '<marker id="arrow" viewBox="0 0 10 10" refX="9" refY="5" markerWidth="7" markerHeight="7" orient="auto-start-reverse"><path d="M0,0 L10,5 L0,10 z" fill="var(--muted)"/></marker>' +
-          '<marker id="back" viewBox="0 0 10 10" refX="9" refY="5" markerWidth="7" markerHeight="7" orient="auto-start-reverse"><path d="M0,0 L10,5 L0,10 z" fill="var(--failed)"/></marker></defs>'
+          '<marker id="back" viewBox="0 0 10 10" refX="9" refY="5" markerWidth="7" markerHeight="7" orient="auto-start-reverse"><path d="M0,0 L10,5 L0,10 z" fill="var(--gate)"/></marker></defs>'
         for (const frame of frames) {
           html += `<rect x="${PAD - 4}" y="${frame.top}" width="${inner + 8}" height="${frame.bottom - frame.top}" rx="12" fill="none" stroke="var(--line)" stroke-dasharray="4 3"/>` +
             `<text class="sub" x="${PAD + 4}" y="${frame.top + 11}">parallel · ${frame.count}</text>`
@@ -666,31 +753,51 @@
             const a = pos[need], b = pos[node.id]
             if (!a || !b) continue
             const x1 = a.x + W / 2, y1 = a.y + H, x2 = b.x + W / 2, y2 = b.y - 2, my = (y1 + y2) / 2
-            html += `<path d="M${x1},${y1} C${x1},${my} ${x2},${my} ${x2},${y2}" fill="none" stroke="var(--muted)" stroke-width="1.5" marker-end="url(#arrow)"/>`
+            // Route links that skip a row around the cards in between.
+            const lane = x1 > PAD + inner / 2 ? PAD + inner + 11 : PAD - 11
+            const edge = b.rowIndex - a.rowIndex > 1
+              ? `M${x1},${y1} C${x1},${y1 + 13} ${lane},${y1 + 5} ${lane},${y1 + 14} V${y2 - 14} C${lane},${y2 - 5} ${x2},${y2 - 13} ${x2},${y2}`
+              : `M${x1},${y1} C${x1},${my} ${x2},${my} ${x2},${y2}`
+            html += `<path d="${edge}" fill="none" stroke="var(--muted)" stroke-width="1.5" marker-end="url(#arrow)"/>`
           }
           if (node.kind === 'gate' && node.loop && pos[node.loop.goto]) {
             const a = pos[node.id], b = pos[node.loop.goto]
             const xr = PAD + inner + LOOP - 18, ya = a.y + H / 2, yb = b.y + H / 2
-            html += `<path d="M${a.x + W},${ya} C${xr},${ya} ${xr},${yb} ${b.x + W + 2},${yb}" fill="none" stroke="var(--failed)" stroke-width="1.3" stroke-dasharray="4 3" marker-end="url(#back)"/>` +
-              `<text class="sub" x="${xr - 2}" y="${(ya + yb) / 2 - 2}" text-anchor="end" style="fill:var(--failed)">revise</text>` +
-              `<text class="sub" x="${xr - 2}" y="${(ya + yb) / 2 + 12}" text-anchor="end" style="fill:var(--failed)">${run ? run.loops : 0}/${node.loop.maxLoops}</text>`
+            html += `<path d="M${a.x + W},${ya} C${xr},${ya} ${xr},${yb} ${b.x + W + 2},${yb}" fill="none" stroke="var(--gate)" stroke-width="1.3" stroke-dasharray="4 3" marker-end="url(#back)"/>` +
+              `<text class="sub" x="${xr - 2}" y="${(ya + yb) / 2 - 2}" text-anchor="end">revise</text>` +
+              `<text class="sub" x="${xr - 2}" y="${(ya + yb) / 2 + 12}" text-anchor="end">${run ? run.loops : 0}/${node.loop.maxLoops}</text>`
           }
         }
         for (const node of nodes) {
           const { x, y } = pos[node.id]
           const rx = node.kind === 'gate' ? 20 : node.kind === 'script' ? 3 : 9
           const dash = node.kind === 'gate' ? ' stroke-dasharray="5 3"' : ''
-          const extra = [node.attempt > 1 ? `attempt ${node.attempt}` : '', node.live ? ago(node.since) : ''].filter(Boolean).join(' · ')
           const selected = state.selected === node.id
-          html += `<g class="node" data-node="${esc(node.id)}"><rect x="${x}" y="${y}" width="${W}" height="${H}" rx="${rx}" fill="var(--card)" stroke="${node.color}" stroke-width="${selected ? 3.5 : 2}"${dash}/>` +
-            `<rect x="${x}" y="${y + 6}" width="5" height="${H - 12}" rx="2" fill="${node.color}"/>` +
+          const description = [node.title, node.sub, graphStatus(node), waitReason(node)].filter(Boolean).join('. ')
+          const label = graphStatus(node)
+          html += `<g class="node" role="button" tabindex="0" aria-expanded="${selected}" aria-label="${esc(description)}" data-node="${esc(node.id)}"><rect class="node-box" x="${x}" y="${y}" width="${W}" height="${H}" rx="${rx}" fill="var(--card)" stroke="${selected ? 'var(--fg)' : 'var(--line)'}" stroke-width="${selected ? 2 : 1}"${dash}/>` +
+            `<circle cx="${x + 9}" cy="${y + 49}" r="3" fill="${node.color}"/>` +
             `<text x="${x + 13}" y="${y + 20}">${esc(cut(node.title, 23))}</text>` +
             `<text class="sub" x="${x + 13}" y="${y + 36}">${esc(cut(node.sub, 27))}</text>` +
-            `<text class="sub" x="${x + 13}" y="${y + 52}" style="fill:${node.color}">${esc(cut(node.label + (extra ? ' · ' + extra : ''), 27))}</text></g>`
+            `<text class="sub" x="${x + 17}" y="${y + 52}">${esc(cut(label, 26))}</text></g>`
         }
+        if (svg.dataset.markup === html) return
+        const focused = svg.contains(document.activeElement) ? document.activeElement.dataset.node : undefined
+        hideGraphTooltip()
         svg.innerHTML = html
+        svg.dataset.markup = html
+        const byId = new Map(nodes.map((node) => [node.id, node]))
         for (const group of svg.querySelectorAll('g.node')) {
-          group.onclick = () => { state.selected = state.selected === group.dataset.node ? null : group.dataset.node; void render() }
+          const node = byId.get(group.dataset.node)
+          const show = () => showGraphTooltip(group, node)
+          group.onpointerenter = group.onfocus = show
+          group.onpointerleave = () => { if (document.activeElement !== group) hideGraphTooltip() }
+          group.onblur = hideGraphTooltip
+          group.onclick = () => { hideGraphTooltip(); state.selected = state.selected === node.id ? null : node.id; void render() }
+          group.onkeydown = (event) => {
+            if (event.key === 'Enter' || event.key === ' ') { event.preventDefault(); group.dispatchEvent(new Event('click')) }
+          }
+          if (focused === node.id) { group.focus({ preventScroll: true }); hideGraphTooltip() }
         }
       }
 
@@ -704,7 +811,7 @@
         const canShow = !!(node.live?.terminalId || (node.workspacePath && node.workspacePath !== here?.path) || (node.workspaceId && node.workspaceId !== state.workspaceId))
         const status = [node.label, node.live ? `for ${ago(node.since)}` : '', node.attempt > 1 ? `attempt ${node.attempt}` : '', node.outcome ? `worker outcome: ${node.outcome}` : ''].filter(Boolean).join(' · ')
         const stable = [node.label, node.attempt > 1 ? `attempt ${node.attempt}` : '', node.outcome ? `worker outcome: ${node.outcome}` : ''].filter(Boolean).join(' · ')
-        const waiting = node.waitingFor?.length && !node.live && ['pending', 'blocked', 'ready', undefined].includes(node.status) ? `<div class="muted small">waits for: ${esc(node.waitingFor.join(', '))}</div>` : ''
+        const waiting = waitReason(node) ? `<div class="muted small">${esc(waitReason(node))}</div>` : ''
         const decision = node.decision ? `<div class="small">Decision: ${node.decision === 'ok' ? 'OK' : 'Revise'}${node.comment ? ` — "${esc(node.comment)}"` : ''}</div>` : ''
         const lines = state.lines[key]
         const html = `<div class="card drawer"><h3>${esc(node.title)}</h3><div class="muted small">${esc(node.sub)}</div>` +
@@ -754,9 +861,9 @@
         }).join('')
         const loops = open.loop ? `Revise sends the run back to step "${esc(open.loop.goto)}" (${open.loop.maxLoops - run.loops} of ${open.loop.maxLoops} left).` : 'Revise stops the run.'
         const warning = task.error ? `<div class="err small" style="margin-top:6px">${esc(task.error)}</div>` : ''
-        box.innerHTML = `<div class="card gate"><h2>${esc(open.title)}</h2><div>${esc(open.question)}</div>${warning}${inputs}` +
+        box.innerHTML = `<div class="card gate"><h2><span class="decision-mark" aria-hidden="true">◆</span> ${esc(open.title)}</h2><div>${esc(open.question)}</div>${warning}${inputs}` +
           `<label for="comment">Comment (required for Revise)</label><textarea id="comment" placeholder="For example: take the current time into account"></textarea>` +
-          `<div class="row"><button id="gateOk" class="ok">OK</button><button id="gateRevise" class="danger">Revise</button></div>` +
+          `<div class="row"><button id="gateOk" class="ok">OK</button><button id="gateRevise">Revise</button></div>` +
           `<div class="muted small" style="margin-top:6px">${loops}</div></div>`
         $('gateOk').onclick = () => resolve(run.id, open.id, 'ok')
         $('gateRevise').onclick = () => resolve(run.id, open.id, 'revise')
@@ -802,6 +909,13 @@
         }
       }
       let pendingAgent = 0
+      let resizeFrame
+      addEventListener('scroll', positionGraphTooltip, true)
+      addEventListener('keydown', (event) => { if (event.key === 'Escape') hideGraphTooltip() })
+      addEventListener('resize', () => {
+        cancelAnimationFrame(resizeFrame)
+        resizeFrame = requestAnimationFrame(() => { positionGraphTooltip(); void render() })
+      })
       orca.plugin.on('runs.changed', () => { void load() })
       // The first read of Orca Runs ended: handle it like the end of "indexing" even if this panel never saw that state.
       orca.plugin.on('index.ready', () => { state.indexing = true; void load() })

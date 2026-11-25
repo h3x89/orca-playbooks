@@ -1,7 +1,7 @@
 // The timeline of any Orca Run: what happened when, from the records Orca keeps (tasks, worker dispatches,
 // mailbox messages and decision gates). Pure functions, shared by the worker and the tests.
 import type { TimelineEvent } from './protocol'
-import { taskDeps, type CliTask } from './orcaRuns'
+import { resultFields, taskAttempt, taskDeps, taskStatus, type CliTask } from './orcaRuns'
 
 export type CliGate = { id?: string; task_id?: string; question?: string; status?: string; resolution?: string | null; created_at?: string; resolved_at?: string | null }
 export type CliMessage = { type?: string; subject?: string; created_at?: string; sequence?: number | string; payload?: unknown }
@@ -21,25 +21,11 @@ export function parseTime(value: unknown): number | undefined {
 const STOPPED_WITHOUT_REPORT = /^worker stopped without reporting$/i
 
 function idsOf(message: CliMessage): { taskId?: string; dispatchId?: string } {
-  const payload = payloadOf(message)
+  const payload = resultFields(message.payload)
   return {
     taskId: typeof payload.taskId === 'string' ? payload.taskId : undefined,
     dispatchId: typeof payload.dispatchId === 'string' ? payload.dispatchId : undefined
   }
-}
-
-function payloadOf(message: CliMessage): Record<string, unknown> {
-  const raw = message.payload
-  if (raw && typeof raw === 'object') return raw as Record<string, unknown>
-  if (typeof raw === 'string') {
-    try {
-      const parsed = JSON.parse(raw)
-      return parsed && typeof parsed === 'object' ? parsed : {}
-    } catch {
-      return {}
-    }
-  }
-  return {}
 }
 
 /**
@@ -49,28 +35,41 @@ function payloadOf(message: CliMessage): Record<string, unknown> {
 export function buildTimeline(tasks: CliTask[], gates: CliGate[], messages: CliMessage[], dispatches: Record<string, DispatchTimes>, showFollowUps = false): { events: TimelineEvent[]; lanes: number } {
   const events: TimelineEvent[] = []
   const titles = new Map(tasks.map((task) => [task.id, task.display_name || task.task_title || task.id]))
+  const attempts = new Map(tasks.map((task) => [task.id, taskAttempt(task)]))
+  const gateTasks = new Set(gates.map((gate) => gate.task_id))
   const spans: { taskId: string; start: number; end?: number }[] = []
   let order = 0
-  const push = (event: Omit<TimelineEvent, 'order'>) => events.push({ ...event, order: order++ })
+  const push = (event: Omit<TimelineEvent, 'order'>) => {
+    const attempt = event.taskId && attempts.get(event.taskId)
+    events.push({ ...event, ...(attempt ? { attempt } : {}), order: order++ })
+  }
 
   for (const task of tasks) {
     const title = titles.get(task.id)!
     const created = parseTime(task.created_at)
     const dispatch = task.dispatch_id ? dispatches[task.dispatch_id] : undefined
-    const started = dispatch?.dispatchedAt
-    const ended = parseTime(task.completed_at) ?? dispatch?.completedAt
-    const who = [dispatch?.agent, dispatch?.model].filter(Boolean).join(' · ')
+    const status = taskStatus(task)
+    const open = ['pending', 'ready', 'dispatched', 'blocked'].includes(status)
+    const result = resultFields(task.result)
+    const recordedScript = typeof result.script === 'string' ? result.script : undefined
+    const started = dispatch?.dispatchedAt ?? (recordedScript ? parseTime(result.startedAt) : undefined)
+    const ends = [dispatch?.completedAt, recordedScript ? parseTime(result.completedAt) : undefined, open ? undefined : parseTime(task.completed_at)]
+      .filter((time): time is number => time !== undefined)
+    const end = ends.length ? Math.max(...ends) : undefined
+    // Orca task timestamps may be rounded down to a second; never put the end before a known start.
+    const ended = end !== undefined && started !== undefined ? Math.max(end, started) : end
+    const who = [dispatch?.agent ?? (recordedScript ? `script ${recordedScript}` : undefined), dispatch?.model].filter(Boolean).join(' · ')
     if (created !== undefined) push({ at: created, kind: 'created', taskId: task.id, title, detail: taskDeps(task.deps).length ? `waits for: ${taskDeps(task.deps).map((dep) => titles.get(dep) ?? dep).join(', ')}` : undefined })
     if (started !== undefined) push({ at: started, kind: showFollowUps && dispatch?.followUpOf ? 'follow-up' : 'started', taskId: task.id, title, detail: who || undefined })
-    if (ended !== undefined && (task.status === 'completed' || task.status === 'failed')) {
-      const from = started ?? created
-      push({ at: ended, kind: task.status === 'failed' ? 'failed' : 'done', taskId: task.id, title, duration: from !== undefined ? Math.max(0, ended - from) : undefined })
+    if (ended !== undefined && (status === 'completed' || status === 'failed' || status === 'superseded' || status === 'sent-back')) {
+      const duration = started !== undefined ? ended - started : undefined
+      const detail = status === 'failed' && typeof result.error === 'string' ? result.error : undefined
+      push({ at: ended, kind: status === 'completed' ? 'done' : status, taskId: task.id, title, ...(duration !== undefined ? { duration } : {}), ...(detail ? { detail } : {}) })
     }
-    const start = started ?? created
-    // A task still open (pending, ready, dispatched, blocked) holds its lane; any other status ends where Orca last saw it.
-    // An open task no worker took (a gate waiting for a person, a step waiting for its needs) is nobody working: no lane.
-    const open = ['pending', 'ready', 'dispatched', 'blocked'].includes(task.status ?? 'pending')
-    if (start !== undefined && !(open && started === undefined)) spans.push({ taskId: task.id, start, end: open ? undefined : ended ?? start })
+    // Count work only when a dispatch or a script start was recorded. A gate measures decision time separately.
+    if (started === undefined || gateTasks.has(task.id) || status === 'superseded' || status === 'sent-back') continue
+    if (ended !== undefined && ended > started) spans.push({ taskId: task.id, start: started, end: ended })
+    else if (ended === undefined && open) spans.push({ taskId: task.id, start: started })
   }
 
   // Reports per worker: Orca's "stopped without reporting" escalation is false when the same dispatch reported later.

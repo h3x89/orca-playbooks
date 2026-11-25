@@ -10,6 +10,34 @@ test('times in the three formats Orca writes', () => {
   assert.equal(parseTime('soon'), undefined)
 })
 
+test('only recorded work spans count, and revisions stay separate from errors', () => {
+  const { events, lanes } = buildTimeline([
+    { id: 'a', status: 'completed', dispatch_id: 'a1', task_title: 'Research · run_sample#1', completed_at: '2026-11-18T20:00:10Z' },
+    { id: 'b', status: 'completed', display_name: 'Other research', dispatch_id: 'b1', completed_at: '2026-11-18T20:00:10Z' },
+    ...Array.from({ length: 5 }, (_, index) => ({
+      id: `old${index}`, status: 'failed', created_at: '2026-11-18T20:00:00Z', completed_at: '2026-11-18T20:00:10Z', result: '{"superseded":true}'
+    })),
+    { id: 'gate', status: 'failed', created_at: '2026-11-18T20:00:00Z', completed_at: '2026-11-18T20:00:10Z', result: { decision: 'popraw' } },
+    { id: 'old-script', status: 'completed', created_at: '2026-11-18T20:00:00Z', completed_at: '2026-11-18T20:00:10Z', result: { file: 'check.txt' } },
+    { id: 'script', status: 'failed', task_title: 'Check · run_sample#2', completed_at: '2026-11-18T20:00:12Z', result: {
+      script: 'check.py', startedAt: '2026-11-18T20:00:11.430Z', completedAt: '2026-11-18T20:00:12.602Z', error: 'Probe failed'
+    } }
+  ], [{ task_id: 'gate', created_at: '2026-11-18T20:00:09Z', resolved_at: '2026-11-18T20:00:10Z', resolution: 'revise' }], [], {
+    a1: { dispatchedAt: Date.parse('2026-11-18T20:00:03Z') },
+    b1: { dispatchedAt: Date.parse('2026-11-18T20:00:04Z') }
+  })
+
+  assert.equal(lanes, 2)
+  assert.equal(events.filter((event) => event.kind === 'superseded').length, 5)
+  assert.equal(events.filter((event) => event.kind === 'sent-back').length, 1)
+  assert.ok(events.filter((event) => event.kind === 'superseded' || event.taskId === 'gate' || event.taskId === 'old-script').every((event) => event.lane === undefined))
+  const failed = events.filter((event) => event.kind === 'failed')
+  assert.equal(failed.length, 1)
+  assert.equal(failed[0].attempt, 2)
+  assert.equal(failed[0].duration, 1172)
+  assert.equal(failed[0].detail, 'Probe failed')
+})
+
 test('a Run becomes events in time order, with durations, reports, gates and lanes for parallel work', () => {
   const { events, lanes } = buildTimeline(
     [
@@ -39,6 +67,25 @@ test('a Run becomes events in time order, with durations, reports, gates and lan
   const laneOf = (title: string) => events.find((event) => event.title === title && event.lane !== undefined)!.lane
   assert.notEqual(laneOf('Review A'), laneOf('Review B'))
   assert.equal(laneOf('Plan'), laneOf('Review B'))
+})
+
+test('uses final task completion after redispatch and ignores stale completion on an active task', () => {
+  const { events, lanes } = buildTimeline([
+    { id: 'retried', status: 'completed', dispatch_id: 'first', completed_at: '2026-11-18T20:00:10Z' },
+    { id: 'active', status: 'dispatched', dispatch_id: 'live', completed_at: '2026-11-18T20:00:02Z' }
+  ], [], [{
+    type: 'worker_done', subject: 'Final report', created_at: '2026-11-18T20:00:10Z', payload: { taskId: 'retried' }
+  }], {
+    first: { dispatchedAt: Date.parse('2026-11-18T20:00:00Z'), completedAt: Date.parse('2026-11-18T20:00:02Z') },
+    live: { dispatchedAt: Date.parse('2026-11-18T20:00:04Z') }
+  })
+  assert.equal(lanes, 2)
+  const completed = events.find((event) => event.taskId === 'retried' && event.kind === 'done')!
+  assert.equal(completed.at, Date.parse('2026-11-18T20:00:10Z'))
+  assert.equal(completed.detail, 'Final report')
+  const active = events.find((event) => event.taskId === 'active' && event.kind === 'started')!
+  assert.equal(active.spanEnd, undefined)
+  assert.notEqual(active.lane, undefined)
 })
 
 test("Orca's 'stopped without reporting' escalation is dropped only when the same worker reported after it", () => {

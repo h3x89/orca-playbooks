@@ -2,9 +2,11 @@
 // gates in `$FAKE_ORCA_STATE`, logs every call to `$FAKE_ORCA_LOG` and answers with `--json` envelopes.
 // A started worker finishes on the next `task-list`, writing `PLAN v<n>` to the file its spec names.
 import { appendFileSync, existsSync, openSync, closeSync, readFileSync, unlinkSync, writeFileSync } from 'node:fs'
+import { basename } from 'node:path'
 
 const statePath = process.env.FAKE_ORCA_STATE
 const logPath = process.env.FAKE_ORCA_LOG
+const reports = JSON.parse(process.env.FAKE_ORCA_REPORTS || '{}')
 const args = process.argv.slice(2).filter((arg) => arg !== '--json' && arg !== '--full')
 appendFileSync(logPath, JSON.stringify(args) + '\n')
 // Lets a test make the first read of Orca Runs slow (outside the state lock, like a slow real CLI).
@@ -104,7 +106,7 @@ switch (command) {
       if (task.status === 'dispatched' && task.spec !== undefined) {
         const file = /Write the result to (\S+\.md)\./.exec(task.spec)?.[1]
         state.plans += 1
-        if (file) writeFileSync(file, `PLAN v${state.plans}`)
+        if (file) writeFileSync(file, reports[basename(file)] ?? `PLAN v${state.plans}`)
         task.status = 'completed'
         task.completed_at = isoNow()
         state.messages.push({ type: 'worker_done', subject: `${task.displayName ?? task.title}: done`, created_at: isoNow(), runId: task.runId, payload: JSON.stringify({ taskId: task.id, dispatchId: task.dispatchId }) })

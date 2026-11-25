@@ -10,6 +10,7 @@ export type CliTask = {
   task_title?: string | null
   dispatch_id?: string | null
   result?: unknown
+  run_id?: string
   created_at?: string
   completed_at?: string | null
 }
@@ -45,6 +46,32 @@ export function taskDeps(deps: unknown): string[] {
     }
   }
   return Array.isArray(value) ? value.filter((item): item is string => typeof item === 'string') : []
+}
+
+export function resultFields(raw: unknown): Record<string, unknown> {
+  let value = raw
+  if (typeof value === 'string') {
+    try {
+      value = JSON.parse(value)
+    } catch {
+      return {}
+    }
+  }
+  return value && typeof value === 'object' && !Array.isArray(value) ? value as Record<string, unknown> : {}
+}
+
+/** A revision decision and the old tasks it replaces share Orca's failed status. */
+export function taskStatus(task: CliTask): string {
+  if (task.status !== 'failed') return task.status ?? 'pending'
+  const result = resultFields(task.result)
+  if (result.superseded === true) return 'superseded'
+  if (result.decision === 'revise' || result.decision === 'popraw') return 'sent-back'
+  return 'failed'
+}
+
+export function taskAttempt(task: CliTask): number | undefined {
+  const match = task.task_title?.match(/ · (run_[A-Za-z0-9]+)#([1-9]\d*)$/)
+  return match && (!task.run_id || match[1] === task.run_id) ? Number(match[2]) : undefined
 }
 
 /** The readable part of a task result: a worker report's `body`, else the JSON itself. */
@@ -86,12 +113,14 @@ export function buildRunGraph(tasks: CliTask[], workers: CliWorker[]): RunNode[]
       id: task.id,
       title: task.display_name || task.task_title || task.id,
       taskTitle: task.task_title || task.display_name || task.id,
-      status: task.status ?? 'pending',
+      status: taskStatus(task),
       needs: taskDeps(task.deps).filter((dep) => ids.has(dep)),
       depth: 0,
       ...splitAgent(worker?.agent)
     }
     const dispatchId = worker?.dispatchId ?? task.dispatch_id ?? undefined
+    const attempt = taskAttempt(task)
+    if (attempt !== undefined) node.attempt = attempt
     if (dispatchId) node.dispatchId = dispatchId
     if (worker?.state) node.workerState = worker.state
     if (worker?.liveness) node.liveness = worker.liveness
