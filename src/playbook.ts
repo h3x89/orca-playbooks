@@ -29,12 +29,22 @@ export type GateStep = Base & {
 
 export type Step = AgentStep | ScriptStep | GateStep
 
+export type InputField = {
+  name: string
+  label: string
+  description: string
+  required: boolean
+  format?: 'ticket'
+  default?: string
+}
+
 export type Playbook = {
   id: string
   title: string
   description: string
   /** Defaults of `{{inputs.<name>}}` in prompts and `PLAYBOOK_INPUT_<NAME>` in scripts. */
   inputs: Record<string, string>
+  inputFields: InputField[]
   steps: Step[]
 }
 
@@ -53,23 +63,54 @@ function text(value: unknown): string | undefined {
   return typeof value === 'string' && value.trim() ? value.trim() : undefined
 }
 
-function parseInputs(raw: unknown, errors: string[]): Record<string, string> {
-  if (raw === undefined) return {}
+const TICKET = /^[A-Z][A-Z0-9]{0,19}-[1-9][0-9]{0,9}$/
+
+function parseInputs(raw: unknown, errors: string[]): InputField[] {
+  if (raw === undefined) return []
   if (!isRecord(raw)) {
-    errors.push('`inputs` must be a map of name → { default }.')
-    return {}
+    errors.push('`inputs` must be a map.')
+    return []
   }
-  const inputs: Record<string, string> = {}
+  const fields: InputField[] = []
   for (const [name, value] of Object.entries(raw)) {
     if (!/^[a-z][a-z0-9_]{0,30}$/.test(name)) {
-      errors.push(`inputs: invalid name "${name}" (lowercase letters, digits, "_").`)
+      errors.push(`inputs.${name}: use lowercase letters, digits and "_".`)
       continue
     }
-    const fallback = isRecord(value) ? text(value.default) : text(value)
-    if (fallback === undefined) errors.push(`inputs.${name}: no \`default\` value.`)
-    else inputs[name] = fallback
+    const data = isRecord(value) ? value : { default: value }
+    const fallback = text(data.default)
+    const required = data.required === true
+    if (data.required !== undefined && typeof data.required !== 'boolean') errors.push(`inputs.${name}: required must be true or false.`)
+    if (data.format !== undefined && data.format !== 'ticket') errors.push(`inputs.${name}: unknown format.`)
+    if (fallback === undefined && !required) errors.push(`inputs.${name}: no default value.`)
+    if (fallback !== undefined && data.format === 'ticket' && !TICKET.test(fallback)) errors.push(`inputs.${name}: invalid default ticket.`)
+    fields.push({
+      name,
+      label: text(data.label) ?? name,
+      description: text(data.description) ?? '',
+      required,
+      ...(data.format === 'ticket' ? { format: 'ticket' as const } : {}),
+      ...(fallback !== undefined ? { default: fallback } : {})
+    })
   }
-  return inputs
+  return fields
+}
+
+/** Both the panel and programmatic callers use the same validation before a run exists. */
+export function resolveInputs(fields: InputField[], provided: unknown): Record<string, string> {
+  if (provided !== undefined && !isRecord(provided)) throw new Error('Run inputs must be an object.')
+  const values = provided ?? {}
+  const known = new Set(fields.map((field) => field.name))
+  for (const key of Object.keys(values)) if (!known.has(key)) throw new Error(`Unknown input: ${key}.`)
+  return Object.fromEntries(fields.map((field) => {
+    const raw = Object.hasOwn(values, field.name) ? values[field.name] : (field.default ?? '')
+    if (typeof raw !== 'string') throw new Error(`${field.label} must be text.`)
+    const value = raw.trim()
+    if (field.required && !value) throw new Error(`${field.label} is required.`)
+    if (value.length > 2000) throw new Error(`${field.label} is longer than 2000 characters.`)
+    if (value && field.format === 'ticket' && !TICKET.test(value)) throw new Error(`${field.label} must look like DEMO-123.`)
+    return [field.name, value]
+  }))
 }
 
 /** Parses and validates one playbook. Never throws: problems come back in `errors`. */
@@ -84,7 +125,8 @@ export function parsePlaybook(id: string, source: string): ParseResult {
   if (!isRecord(raw)) return { errors: ['The file is not a YAML map.'] }
   const title = text(raw.title) ?? id
   const description = text(raw.description) ?? ''
-  const inputs = parseInputs(raw.inputs, errors)
+  const inputFields = parseInputs(raw.inputs, errors)
+  const inputs = Object.fromEntries(inputFields.filter((field) => field.default !== undefined).map((field) => [field.name, field.default!]))
   if (!Array.isArray(raw.steps) || raw.steps.length === 0) return { errors: ['No `steps` list.'] }
   if (raw.steps.length > 40) errors.push('At most 40 steps.')
 
@@ -177,7 +219,7 @@ export function parsePlaybook(id: string, source: string): ParseResult {
       else if (!ancestors(steps, step.id).has(target.id)) errors.push(`${step.id}: \`goto\` must name a step this gate depends on.`)
     }
   }
-  return errors.length ? { errors } : { playbook: { id, title, description, inputs, steps }, errors }
+  return errors.length ? { errors } : { playbook: { id, title, description, inputs, inputFields, steps }, errors }
 }
 
 function hasCycle(steps: Step[]): boolean {

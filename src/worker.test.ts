@@ -8,6 +8,7 @@ import path from 'node:path'
 import { fileURLToPath } from 'node:url'
 import * as worker from './worker'
 import { localNow, parseResolution, scriptOutput } from './worker'
+import YAML from '../vendor/yaml/index.js'
 import type { RunInfo } from './protocol'
 
 const PLAYBOOK = `
@@ -71,8 +72,8 @@ function setup() {
   const host = mockHost({
     results: {
       'workspace.list': { workspaces: [
-        { id: 'repo1::' + workspace, kind: 'worktree', name: 'demo', path: workspace, branch: 'main', hostId: 'local' },
-        { id: 'repo2::' + other, kind: 'worktree', name: 'other', path: other, branch: 'feature', hostId: 'local' }
+        { id: 'repo1::' + workspace, kind: 'worktree', name: 'demo', projectId: 'project-a', project: 'Repository A', path: workspace, branch: 'main', hostId: 'local' },
+        { id: 'repo2::' + other, kind: 'worktree', name: 'other', projectId: 'project-b', project: 'Repository B', path: other, branch: 'feature', hostId: 'local' }
       ], truncated: false },
       'workspace.readContext': () => world.focus,
       'agents.list': () => ({ agents: world.agents }),
@@ -518,4 +519,177 @@ test('the ASDLC example stops on BLOCK and deploys the verified copy on PASS', a
   assert.equal(passed.status, 'done')
   assert.match(passed.tasks.deploy.output ?? '', /2 minutes = 120 seconds/)
   assert.match(readFileSync(path.join(passed.runDir, 'deploy', 'duration.py'), 'utf8'), /minutes \* 60/)
+})
+
+test('rejects an invalid ticket before creating a run and keeps two input sets separate', async () => {
+  const { workspace, host } = setup()
+  const books = path.join(workspace, '.orca', 'playbooks')
+  const source = [
+    'inputs:',
+    '  ticket: { label: Ticket, required: true, format: ticket }',
+    'steps:',
+    '  - { id: report, script: { run: report.sh } }'
+  ].join('\n')
+  for (const file of ['first.yaml', 'second.yaml']) writeFileSync(path.join(books, file), source)
+  writeFileSync(path.join(books, 'scripts', 'report.sh'), 'printf "%s\\n" "$PLAYBOOK_INPUT_TICKET"')
+  const mounted = await mountWorker(worker, { host })
+  const state = await mounted.request('state.get', {})
+  const target = { workspaceId: state.workspaceId!, file: 'first.yaml' }
+  await assert.rejects(mounted.request('run.start', { ...target, inputs: {} }), /Ticket is required/)
+  await assert.rejects(mounted.request('run.start', { ...target, inputs: { ticket: 'bad' } }), /DEMO-123/)
+  assert.equal(existsSync(path.join(workspace, '.orca', 'runs')), false)
+  assert.equal(calls().some((call) => call[1] === 'run-create'), false)
+
+  const first = (await mounted.request('run.start', { ...target, inputs: { ticket: 'DEMO-123' } })).run
+  const second = (await mounted.request('run.start', { ...target, file: 'second.yaml', inputs: { ticket: 'DEMO-456' } })).run
+  assert.notEqual(first.id, second.id)
+  assert.notEqual(first.runDir, second.runDir)
+  for (const [run, ticket] of [[first, 'DEMO-123'], [second, 'DEMO-456']] as const) {
+    const read = async () => (await mounted.request('state.get', {})).runs.find((entry) => entry.id === run.id)!
+    const completed = await until(read, (entry) => entry.status === 'done')
+    assert.equal(completed.inputs.ticket, ticket)
+    assert.equal(completed.tasks.report.output, ticket)
+  }
+})
+
+test('keeps free-form text in one CLI option when it begins with a hyphen', async () => {
+  const { workspace, host } = setup()
+  writeFileSync(path.join(workspace, '.orca', 'playbooks', 'labels.yaml'), YAML.stringify({
+    steps: [
+      { id: 'report', title: '--draft report', script: { run: 'air.sh' } },
+      { id: 'decision', needs: ['report'], gate: { question: '--ready for approval?' } }
+    ]
+  }))
+  const mounted = await mountWorker(worker, { host })
+  const state = await mounted.request('state.get', {})
+  const { run } = await mounted.request('run.start', { workspaceId: state.workspaceId!, file: 'labels.yaml' })
+  const read = async () => (await mounted.request('state.get', {})).runs.find((entry) => entry.id === run.id)!
+  await until(read, (entry) => entry.status === 'waiting')
+  assert.ok(calls().some((call) => call[1] === 'task-create' && call.includes('--display-name=--draft report')))
+  assert.ok(calls().some((call) => call[1] === 'gate-create' && call.includes('--question=--ready for approval?')))
+})
+
+test('lists saved playbooks by workspace and all open decisions across repositories', async () => {
+  const { workspace, other, host } = setup()
+  const file = 'decisions.yaml'
+  const definitions = { title: 'Ticket choices', steps: [
+    { id: 'approval', title: 'Approve the plan', gate: { question: 'Approve?' } },
+    { id: 'review', title: 'Review the result', gate: { question: 'Accept?' } }
+  ], inputs: { ticket: { required: true, format: 'ticket' } } }
+  for (const root of [workspace, other]) {
+    const books = path.join(root, '.orca', 'playbooks')
+    mkdirSync(books, { recursive: true })
+    writeFileSync(path.join(books, file), YAML.stringify(definitions))
+  }
+  writeFileSync(path.join(other, '.orca', 'playbooks', 'invalid.yaml'), 'title: Missing steps')
+  const mounted = await mountWorker(worker, { host })
+  const { entries } = await mounted.request('catalog.list', {})
+  assertPlainJson(entries)
+  assert.deepEqual(entries.map((entry) => [entry.workspace.projectId, entry.workspace.projectName]), [
+    ['project-a', 'Repository A'], ['project-b', 'Repository B']
+  ])
+  assert.match(entries[1].playbooks.find((book) => book.file === 'invalid.yaml')?.errors[0] ?? '', /steps/)
+  const primary = await mounted.request('state.get', {})
+  assert.equal(calls().some((call) => call[1] === 'run-create'), false)
+  const first = (await mounted.request('run.start', { workspaceId: primary.workspaceId!, file, inputs: { ticket: 'DEMO-123' } })).run
+  const second = (await mounted.request('run.start', { workspaceId: primary.workspaces[1].id, file, inputs: { ticket: 'DEMO-456' } })).run
+  const read = () => mounted.request('state.get', { workspaceId: primary.workspaceId! })
+  await until(async () => (await read()).runs.find((run) => run.id === first.id)!,
+    (run) => !!run.tasks.approval.gateId && !!run.tasks.review.gateId)
+  await until(async () => (await mounted.request('state.get', { workspaceId: second.workspaceId })).runs.find((run) => run.id === second.id)!,
+    (run) => !!run.tasks.approval.gateId && !!run.tasks.review.gateId)
+  const open = (await read()).waitingDecisions
+  assert.deepEqual(open.map(({ runId, stepId, ticket }) => [runId, stepId, ticket]), [
+    [second.id, 'approval', 'DEMO-456'], [second.id, 'review', 'DEMO-456'],
+    [first.id, 'approval', 'DEMO-123'], [first.id, 'review', 'DEMO-123']
+  ])
+  await mounted.request('gate.resolve', { runId: second.id, stepId: 'review', choice: 'ok' })
+  assert.equal((await read()).waitingDecisions.length, 3)
+  assert.equal((await read()).waitingDecisions.some((entry) => entry.runId === second.id && entry.stepId === 'review'), false)
+})
+
+test('the generated BPMN graph keeps the revision loop and fails closed on BLOCK', async () => {
+  const { workspace, host } = setup()
+  const example = new URL('../examples/asdlc/', import.meta.url)
+  const compiler = fileURLToPath(new URL('../tools/bpmn-to-orca.py', import.meta.url))
+  const diagram = fileURLToPath(new URL('process.bpmn', example))
+  const bindings = fileURLToPath(new URL('orca-bindings.json', example))
+  const generated = execFileSync('python3', [compiler, diagram, bindings], { encoding: 'utf8' })
+  const compiled = YAML.parse(generated)
+  const reference = YAML.parse(readFileSync(new URL('.orca/playbooks/review-gated-fix.yaml', example), 'utf8'))
+  assert.deepEqual(compiled, reference, 'all definitions, graph dependencies and bindings come through')
+  const invalid = path.join(workspace, 'unsupported.bpmn')
+  const model = readFileSync(diagram, 'utf8')
+  const rejects = (source: string, reason: RegExp) => {
+    assert.notEqual(source, model, 'negative fixture must actually change the model')
+    writeFileSync(invalid, source)
+    assert.throws(() => execFileSync('python3', [compiler, invalid, bindings], { stdio: 'pipe' }), reason)
+  }
+  rejects(model.replace('<bpmn:documentation>', '<bpmn:receiveTask id="unsupported-lab-node"/><bpmn:documentation>'),
+    /Unsupported element unsupported-lab-node/)
+  rejects(model.replace('<bpmn:incoming>flow-2</bpmn:incoming>',
+    '<bpmn:multiInstanceLoopCharacteristics/><bpmn:incoming>flow-2</bpmn:incoming>'),
+    /unsupported multiInstanceLoopCharacteristics/)
+  rejects(model.replace(/<bpmn:parallelGateway id="join"[^>]*>[\s\S]*?<\/bpmn:parallelGateway>/,
+    (join) => join.replaceAll('parallelGateway', 'exclusiveGateway')), /merging multiple exclusive paths is unsupported/)
+
+  const books = path.join(workspace, '.orca', 'playbooks')
+  const scripts = path.join(books, 'scripts')
+  for (const name of ['duration.py', 'test_duration.py', '.gitignore']) {
+    writeFileSync(path.join(workspace, name), readFileSync(new URL(name, example)))
+  }
+  writeFileSync(path.join(scripts, 'check.py'), readFileSync(new URL('.orca/playbooks/scripts/check.py', example)))
+  writeFileSync(path.join(scripts, 'fixture.py'), [
+    'import hashlib, json, os',
+    'from pathlib import Path',
+    'root = Path(os.environ["PLAYBOOK_RUN_DIR"])',
+    'step = os.environ["PLAYBOOK_STEP"]',
+    'if step == "plan":',
+    '    (root / "plan.md").write_text("Change only duration.py")',
+    'elif step in ("review-plan", "review-deploy"):',
+    '    subject = root / ("plan.md" if step == "review-plan" else "candidate.json")',
+    '    verdict = os.environ["PLAYBOOK_INPUT_VERDICT"] if step == "review-plan" else "PASS"',
+    '    report = {"verdict": verdict, "subject_sha256": hashlib.sha256(subject.read_bytes()).hexdigest(), "reason": "Lab fixture"}',
+    '    (root / f"{step}.md").write_text(json.dumps(report))',
+    'elif step == "fix":',
+    '    code = root.parents[2] / "duration.py"',
+    '    code.write_text(code.read_text().replace("* 100", "* 60"))',
+    'else:',
+    '    (root / f"{step}.md").write_text("Research fixture")'
+  ].join('\n'))
+  const steps = compiled.steps.map((step: Record<string, unknown>) => {
+    if (!step.agent) return step
+    const { agent, prompt, keep_open, model, effort, ...node } = step
+    return { ...node, script: { run: 'fixture.py' } }
+  })
+  writeFileSync(path.join(books, 'generated.yaml'), YAML.stringify({
+    ...compiled, inputs: { verdict: { default: 'PASS' } }, steps
+  }))
+  execFileSync('git', ['init', '-q'], { cwd: workspace })
+  execFileSync('git', ['add', '.'], { cwd: workspace })
+  const mounted = await mountWorker(worker, { host })
+  const state = await mounted.request('state.get', {})
+  const start = async (verdict: string) => {
+    const { run } = await mounted.request('run.start', { workspaceId: state.workspaceId!, file: 'generated.yaml', inputs: { verdict } })
+    const read = async () => (await mounted.request('state.get', {})).runs.find((entry) => entry.id === run.id)!
+    await until(read, (entry) => entry.status === 'waiting')
+    return { run, read }
+  }
+  const blocked = await start('BLOCK')
+  await mounted.request('gate.resolve', { runId: blocked.run.id, stepId: 'decide', choice: 'ok' })
+  const stopped = await until(blocked.read, (entry) => entry.status === 'failed')
+  assert.equal(stopped.tasks['verify-plan'].status, 'failed')
+  assert.equal(stopped.tasks.fix.status, 'pending')
+  assert.equal(existsSync(path.join(stopped.runDir, 'deploy')), false)
+
+  const passing = await start('PASS')
+  const initial = await passing.read()
+  const revised = (await mounted.request('gate.resolve', { runId: passing.run.id, stepId: 'decide', choice: 'revise', comment: 'Clarify fixture scope' })).run
+  assert.equal(revised.tasks['research-code'].taskId, initial.tasks['research-code'].taskId)
+  assert.equal(revised.tasks['research-rules'].taskId, initial.tasks['research-rules'].taskId)
+  assert.equal(revised.tasks.plan.attempt, 2)
+  await until(passing.read, (entry) => entry.status === 'waiting' && entry.tasks.decide.attempt === 2)
+  await mounted.request('gate.resolve', { runId: passing.run.id, stepId: 'decide', choice: 'ok' })
+  const done = await until(passing.read, (entry) => entry.status === 'done')
+  assert.match(done.tasks.deploy.output ?? '', /2 minutes = 120 seconds/)
 })

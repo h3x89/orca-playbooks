@@ -202,8 +202,8 @@ The review-gated workflow above has its own [demo setup](examples/asdlc/README.m
 
    You can also copy the example directory into an existing workspace. The panel reads
    `.orca/playbooks/` in the selected workspace.
-3. Open the demo workspace, then the **Playbooks** panel in the right sidebar. Click **Refresh**
-   if the panel was open while you copied the files.
+3. Open the demo workspace, then the **Playbooks** panel in the right sidebar. Select **Workspace**.
+   Click **Refresh** if the panel was open while you copied the files.
 4. Pick **Sequential vs parallel** (script steps only, no agent) and press **Start**. Watch the Graph
    and Timeline tabs, then answer the gate with **OK**.
 5. Try **Weather research** with Codex configured in Orca. Two agents write reports from fictional
@@ -243,7 +243,8 @@ Install this plugin only if you trust its code, and start only playbooks from re
 - The plugin has no hooks and changes no Orca or agent settings. Besides the terminals it opens, it
   writes only to `<repo>/.orca/runs/` and its own plugin storage.
 
-Capabilities it asks for: `storage:own` (the runs it started), `workspace:read` (the workspace in focus
+Capabilities it asks for: `storage:own` (the runs it started), `settings:own` (the optional journal setting),
+`workspace:read` (the workspace in focus
 and the list of workspaces), `workspace:write` (focus an agent's terminal, open a workspace),
 `agent:read` (live agent states), `terminal:send`, `notifications:show`. Orca describes `terminal:send`
 broadly (open and close terminals, type and run commands in your terminals, local and over SSH); the
@@ -254,7 +255,13 @@ meant for development and the tests.
 
 ## The panel
 
-The panel follows the workspace selected in Orca's left sidebar (**Pin** keeps it on one). It shows:
+The panel opens on **Workspace**. **Needs you** groups open decisions by repository, and its count
+stays visible across the tabs. Select **Open decision** to go to the gate. After answering a gate
+opened from **Needs you**, the panel returns to the list.
+**Catalog** groups saved playbooks by local repository and shows their workspace or branch.
+**Open playbook** selects that YAML in its workspace. Click **Start** there to run it.
+
+**Workspace** follows the workspace selected in Orca's left sidebar (**Pin** keeps it on one). It shows:
 
 - the playbooks of the workspace and **Start**;
 - **Run or conversation**: playbook runs, conversations of this workspace that started agents, and other
@@ -314,7 +321,7 @@ Results of a run go to `<repo>/.orca/runs/<run_id>/` (the plugin adds a `.gitign
 ```yaml
 title: Weather and air
 description: Shown under the playbook in the panel.
-inputs:                      # defaults; {{inputs.<name>}} in prompts, PLAYBOOK_INPUT_<NAME> in scripts
+inputs:                      # optional fields with defaults
   activity: { default: running }
 steps:
   - id: weather
@@ -344,6 +351,22 @@ steps:
 - `on.revise.goto` must name a step the gate depends on; that step, every step between it and the gate,
   the gate and everything after it run again. On Revise, a gate without `on.revise`, or with no loops
   left, ends the run as sent back.
+
+### Ask for a ticket at start
+
+```yaml
+inputs:
+  ticket:
+    label: Ticket
+    description: Enter the issue ID, for example DEMO-123.
+    required: true
+    format: ticket
+```
+
+The panel displays a field above **Start**. An empty or invalid ticket stops the
+start before an Orca Run is created. A prompt can read `{{inputs.ticket}}`
+and a script can read `PLAYBOOK_INPUT_TICKET`. Each run keeps its own values.
+Input fields also accept `default`; existing defaults still prefill the form.
 
 A run is an ordinary Orca Run, so agents and scripts can read it with
 `orca orchestration task-list --run <run_id>` and `gate-list --run <run_id> --full`. Start runs and

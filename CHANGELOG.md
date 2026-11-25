@@ -1,5 +1,15 @@
 # Changelog
 
+## 0.5.4
+
+- **Workspace** opens first. **Needs you** and **Catalog** show open decisions and saved playbooks
+  grouped by repository. The decision count stays visible across all three tabs. Answering a gate
+  opened from **Needs you** returns you to that list.
+- Required start inputs such as a ticket are checked before a run starts. Each run keeps its values.
+- Timeline uses dependency completion to correct apparent overlaps and early gates caused by
+  whole-second timestamps.
+- The review-gated example can generate its Orca YAML from BPMN and a set of Orca bindings.
+
 ## 0.5.3
 
 - The README follows a review-gated fix from parallel research through Revise, approval, and a

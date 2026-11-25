@@ -12,8 +12,8 @@ import path from 'node:path'
 import { buildRunGraph, launchOf, workerActive, workspacePath, type CliTask, type CliWorker } from './orcaRuns'
 import { localFirstPrompts } from './firstPrompt'
 import { buildTimeline, parseTime, type CliGate, type CliMessage, type DispatchTimes } from './timeline'
-import { depths, loopSteps, parsePlaybook, renderPrompt, topologicalOrder, type GateStep, type Playbook, type ScriptStep, type Step } from './playbook'
-import type { AgentLive, RunNode, OrcaRunSummary, PlaybookInfo, RunInfo, SessionAgent, SessionChild, SessionInfo, StepInfo, StepRun, TimelineEvent, WorkspaceInfo } from './protocol'
+import { depths, loopSteps, parsePlaybook, renderPrompt, resolveInputs, topologicalOrder, type GateStep, type Playbook, type ScriptStep, type Step } from './playbook'
+import type { AgentLive, CatalogEntry, RunNode, OrcaRunSummary, PlaybookInfo, RunInfo, SessionAgent, SessionChild, SessionInfo, StepInfo, StepRun, TimelineEvent, WorkspaceInfo } from './protocol'
 
 const RUNS_KEY = 'runs.v2'
 const MAX_RUNS = 20
@@ -110,6 +110,11 @@ function orcaCli(args: string[], timeoutMs = 120_000, maxBuffer = 4 * 1024 * 102
       resolve(parsed.result ?? {})
     })
   })
+}
+
+/** Keep free-form values beginning with a hyphen in one option argument for the Orca parser. */
+function textOption(name: string, value: string): string[] {
+  return value.startsWith('-') ? [name + '=' + value] : [name, value]
 }
 
 function field(value: unknown, ...keys: string[]): string | undefined {
@@ -352,7 +357,14 @@ export default function activate(orca: OrcaWorkerApi): void {
     const result = await orca.host.call('workspace.list', {})
     return result.workspaces
       .filter((workspace) => workspace.path && (workspace.hostId === 'local' || workspace.hostId === null))
-      .map((workspace) => ({ id: workspace.id, name: workspace.name, path: workspace.path, branch: workspace.branch }))
+      .map((workspace) => ({
+        id: workspace.id,
+        name: workspace.name,
+        path: workspace.path,
+        branch: workspace.branch,
+        ...(workspace.projectId ? { projectId: workspace.projectId } : {}),
+        ...(workspace.project ? { projectName: workspace.project } : {})
+      }))
   }
 
   async function playbooksIn(workspace: WorkspaceInfo): Promise<PlaybookInfo[]> {
@@ -371,7 +383,7 @@ export default function activate(orca: OrcaWorkerApi): void {
       const id = file.replace(/\.ya?ml$/i, '')
       const parsed = parsePlaybook(id, await readFile(full, 'utf8'))
       result.push(parsed.playbook
-        ? { file, id, title: parsed.playbook.title, description: parsed.playbook.description, errors: [], steps: stepInfo(parsed.playbook) }
+        ? { file, id, title: parsed.playbook.title, description: parsed.playbook.description, errors: [], inputFields: parsed.playbook.inputFields, steps: stepInfo(parsed.playbook) }
         : { file, id, title: id, description: '', errors: parsed.errors, steps: [] })
     }
     return result
@@ -399,7 +411,7 @@ export default function activate(orca: OrcaWorkerApi): void {
 
   async function createTask(run: StoredRun, step: Step, comment: string, attempt: number): Promise<string> {
     const deps = step.needs.map((need) => run.tasks[need].taskId)
-    const created = await orcaCli(['orchestration', 'task-create', '--run', run.id, '--from', run.handle, '--task-title', taskTitle(run, step, attempt), '--display-name', step.title, '--spec', specFor(run, step, comment), '--deps', JSON.stringify(deps)])
+    const created = await orcaCli(['orchestration', 'task-create', '--run', run.id, '--from', run.handle, ...textOption('--task-title', taskTitle(run, step, attempt)), ...textOption('--display-name', step.title), ...textOption('--spec', specFor(run, step, comment)), '--deps', JSON.stringify(deps)])
     const taskId = field(created, 'task', 'id') ?? field(created, 'taskId')
     if (!taskId) throw new Error(`Orca returned no task id for step ${step.id}.`)
     return taskId
@@ -518,7 +530,7 @@ export default function activate(orca: OrcaWorkerApi): void {
             await decide(run, step, answer.choice, answer.comment, 'cli')
           } else {
             // A resolved gate cannot be reopened in Orca: ask again with a new gate on the same task.
-            const again = await orcaCli(['orchestration', 'gate-create', '--task', state.taskId, '--question', step.question, '--options', JSON.stringify(['ok', 'revise']), '--from', run.handle])
+            const again = await orcaCli(['orchestration', 'gate-create', '--task', state.taskId, ...textOption('--question', step.question), '--options', JSON.stringify(['ok', 'revise']), '--from', run.handle])
             state.gateId = field(again, 'gateId') ?? field(again, 'gate', 'id') ?? field(again, 'id')
             state.error = `The answer "${resolution.slice(0, 200)}" is neither "ok" nor "revise: comment"; the gate asks again.`
           }
@@ -529,7 +541,7 @@ export default function activate(orca: OrcaWorkerApi): void {
       if (state.status !== 'ready') continue
       if (step.kind === 'gate') {
         if (state.gateId) continue
-        const gate = await orcaCli(['orchestration', 'gate-create', '--task', state.taskId, '--question', step.question, '--options', JSON.stringify(['ok', 'revise']), '--from', run.handle])
+        const gate = await orcaCli(['orchestration', 'gate-create', '--task', state.taskId, ...textOption('--question', step.question), '--options', JSON.stringify(['ok', 'revise']), '--from', run.handle])
         state.gateId = field(gate, 'gateId') ?? field(gate, 'gate', 'id') ?? field(gate, 'id')
         state.status = 'blocked'
         changed = true
@@ -539,8 +551,8 @@ export default function activate(orca: OrcaWorkerApi): void {
         changed = true
       } else if (!state.dispatchId) {
         const args = ['orchestration', 'worker-start', '--run', run.id, '--from', run.handle, '--task', state.taskId, '--agent', step.agent, '--worktree', selector(run.workspaceId)]
-        if (step.model) args.push('--model', step.model)
-        if (step.model && step.effort) args.push('--effort', step.effort)
+        if (step.model) args.push(...textOption('--model', step.model))
+        if (step.model && step.effort) args.push(...textOption('--effort', step.effort))
         if (step.keepOpen) args.push('--keep-open')
         let started: CliResult
         try {
@@ -724,7 +736,35 @@ export default function activate(orca: OrcaWorkerApi): void {
       : []
     const waitingElsewhere = runs.filter((run) => run.status === 'waiting' && run.workspaceId !== chosen?.id)
       .map((run) => ({ runId: run.id, title: run.title, workspaceId: run.workspaceId, workspaceName: run.workspaceName }))
-    return json({ workspaces: list, workspaceId: chosen?.id ?? null, following, indexing: stillIndexing, playbooks: chosen ? await playbooksIn(chosen) : [], runs: shown, orcaRuns, sessions, waitingElsewhere })
+    const waitingDecisions = runs.filter((run) => run.status === 'waiting').flatMap((run) => {
+      const workspace = list.find((entry) => entry.id === run.workspaceId || entry.path === run.workspacePath)
+      if (!workspace) return []
+      return run.steps.filter((step) => {
+        const task = run.tasks[step.id]
+        return step.kind === 'gate' && !!task?.gateId && !task.decision
+      }).map((step) => ({
+        workspaceId: workspace.id, runId: run.id, title: run.title, stepId: step.id, stepTitle: step.title,
+        ...(run.inputs?.ticket ? { ticket: run.inputs.ticket } : {})
+      }))
+    })
+    return json({ workspaces: list, workspaceId: chosen?.id ?? null, following, indexing: stillIndexing, playbooks: chosen ? await playbooksIn(chosen) : [], runs: shown, orcaRuns, sessions, waitingElsewhere, waitingDecisions })
+  })
+
+  orca.panels.handle('catalog.list', async () => {
+    const list = await workspaces()
+    const entries: CatalogEntry[] = []
+    for (let index = 0; index < list.length; index += 6) {
+      const batch = await Promise.all(list.slice(index, index + 6).map(async (workspace): Promise<CatalogEntry> => {
+        try {
+          const playbooks = (await playbooksIn(workspace)).map(({ file, title, description, errors }) => ({ file, title, description, errors }))
+          return { workspace, playbooks }
+        } catch {
+          return { workspace, playbooks: [], error: 'Could not read the playbooks in this workspace.' }
+        }
+      }))
+      entries.push(...batch.filter((entry) => entry.playbooks.length || entry.error))
+    }
+    return { entries }
   })
 
   orca.panels.handle('orca.run', async ({ runId }) => {
@@ -909,7 +949,7 @@ export default function activate(orca: OrcaWorkerApi): void {
     return { opened: true }
   })
 
-  orca.panels.handle('run.start', async ({ workspaceId, file }) => {
+  orca.panels.handle('run.start', async ({ workspaceId, file, inputs: provided }) => {
     await load()
     const workspace = (await workspaces()).find((candidate) => candidate.id === workspaceId)
     if (!workspace) throw new Error('No such workspace on this host.')
@@ -919,6 +959,7 @@ export default function activate(orca: OrcaWorkerApi): void {
     const parsed = parsePlaybook(file.replace(/\.ya?ml$/i, ''), await readFile(source, 'utf8'))
     if (!parsed.playbook) throw new Error(parsed.errors.join(' '))
     const playbook = parsed.playbook
+    const inputs = resolveInputs(playbook.inputFields, provided)
     // The coordinator terminal only gives the Run an Orca identity (`--from`). It runs an inert sink, so a
     // wake-up line Orca may type into it is swallowed instead of being run by the shell.
     const { terminalId: handle } = await orca.host.call('terminal.create', { workspaceId: workspace.id, title: `Playbook: ${playbook.title}`, command: COORDINATOR_SINK })
@@ -942,7 +983,7 @@ export default function activate(orca: OrcaWorkerApi): void {
       updatedAt: Date.now(),
       runDir,
       handle,
-      inputs: playbook.inputs,
+      inputs,
       loops: 0,
       steps: stepInfo(playbook),
       tasks: {},

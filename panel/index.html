@@ -53,12 +53,23 @@
       svg g.node:focus-visible .node-box { stroke: var(--fg); stroke-width: 2.5px; }
       #graphTooltip { position: fixed; z-index: 2; pointer-events: none; max-width: min(280px, calc(100vw - 16px)); padding: 7px 9px; border: 1px solid var(--line); border-radius: 6px; color: var(--fg); background: var(--bg); box-shadow: 0 2px 10px #0003; font-size: 12px; overflow-wrap: anywhere; }
       details summary { cursor: pointer; color: var(--muted); font-size: 11.5px; margin-top: 3px; }
-      .muted { color: var(--muted); }
+      #run-inputs label { display: grid; gap: 4px; margin: 8px 0; }
+    #run-inputs input { font: inherit; border: 1px solid currentColor; border-radius: 4px; padding: 5px 6px; min-width: 0; color: inherit; background: transparent; }
+    .muted { color: var(--muted); }
       .small { font-size: 11px; }
       .drawer h3 { margin: 0 0 4px; font-size: 13px; }
       .tabs { display: flex; gap: 4px; margin-top: 10px; flex-wrap: wrap; }
       .tabs button { padding: 3px 7px; font-size: 12px; }
       .tabs button.on { border-color: var(--fg); font-weight: 600; }
+      .overview-nav { display: flex; align-items: baseline; justify-content: space-between; flex-wrap: wrap; gap: 6px; margin-bottom: 10px; }
+      .overview-nav .tabs { margin-top: 0; }
+      .overview-count { display: inline-block; min-width: 1.5em; padding: 0 4px; margin-left: 3px; border-radius: 1em; background: var(--card); text-align: center; font-variant-numeric: tabular-nums; }
+      #needs-count.has-decisions { background: color-mix(in srgb, var(--gate) 25%, var(--bg)); }
+      .project-block { border-top: 1px solid var(--line); margin-top: 10px; padding-top: 9px; }
+      .project-block h2 { font-size: 13px; overflow-wrap: anywhere; margin: 0 0 6px; }
+      .overview-row { display: flex; gap: 8px; align-items: center; justify-content: space-between; flex-wrap: wrap; padding: 7px 8px; margin: 4px 0; background: var(--card); border: 1px solid var(--line); border-radius: 6px; }
+      .overview-row > div { flex: 1 1 130px; min-width: 0; overflow-wrap: anywhere; }
+      .overview-row h3 { font-size: inherit; margin: 0 0 2px; }
       .timeline { margin-top: 8px; max-height: 520px; overflow: auto; border: 1px solid var(--line); border-radius: 8px; container-type: inline-size; }
       .tl-head { padding: 6px 8px; color: var(--muted); font-size: 11px; border-bottom: 1px solid var(--line); position: sticky; top: 0; background: var(--bg); }
       /* Narrow panels: the text column may shrink (minmax 0) and wraps to at most two lines; the full text is in its tooltip. */
@@ -106,6 +117,19 @@
   </head>
   <body>
     <h1>Playbooks <span id="runBadge"></span></h1>
+    <nav class="overview-nav" aria-label="Playbooks views">
+      <div class="tabs" role="tablist" aria-label="Playbooks views">
+        <button id="workspace-tab" class="on" role="tab" aria-controls="workspace-view" aria-selected="true">Workspace</button>
+        <button id="needs-tab" role="tab" aria-controls="needs-panel" aria-selected="false" tabindex="-1">Needs you <span id="needs-count" class="overview-count" aria-live="polite">…</span></button>
+        <button id="catalog-tab" role="tab" aria-controls="catalog-panel" aria-selected="false" tabindex="-1">Catalog</button>
+      </div>
+    </nav>
+    <div id="overview-message" class="err small" role="status"></div>
+    <section id="needs-panel" role="tabpanel" aria-labelledby="needs-tab" hidden>
+      <p class="muted">Reading decisions…</p>
+    </section>
+    <section id="catalog-panel" role="tabpanel" aria-labelledby="catalog-tab" hidden></section>
+    <div id="workspace-view" role="tabpanel" aria-labelledby="workspace-tab">
     <div id="where" class="where"></div>
     <div id="pickWrap" style="display:none">
       <label for="workspace">Workspace</label>
@@ -115,6 +139,7 @@
 
     <label for="playbook">Playbook from <code>.orca/playbooks/</code></label>
     <select id="playbook"></select>
+    <div id="run-inputs" hidden></div>
     <div id="description" class="muted small" style="margin-top:4px"></div>
     <div class="row">
       <button id="start" class="primary">Start</button>
@@ -126,7 +151,7 @@
     <select id="run"></select>
     <div id="runSource" class="muted small"></div>
     <div id="indexNote" class="muted small" style="margin-top:4px"></div>
-    <div id="gate"></div>
+    <div id="gate" tabindex="-1"></div>
     <div id="sessionView"></div>
     <div id="tabs" class="tabs"></div>
     <div id="graphNote"></div>
@@ -158,12 +183,14 @@
     <div id="graphTooltip" role="tooltip" hidden></div>
     <div id="footer" class="muted small" style="margin-top:8px; overflow-wrap:anywhere"></div>
 
+    </div>
+
     <script>
       const $ = (id) => document.getElementById(id)
       const state = {
         workspaceId: null, following: false, pinned: null, workspaces: [], playbooks: [], runs: [], orcaRuns: [], waitingElsewhere: [],
         sel: null, nodes: {}, selected: null, lines: {}, busy: false, openOutputs: new Set(),
-        sessions: [], view: null, timelines: {}, timelineErrors: {}, stale: new Set(), sessionViews: {}, showAllAgents: false, selectedSession: null, followBottom: true, detailsOpen: {}
+        sessions: [], home: 'workspace', queueDecision: null, waitingDecisions: [], catalog: null, view: null, timelines: {}, timelineErrors: {}, stale: new Set(), sessionViews: {}, showAllAgents: false, selectedSession: null, followBottom: true, detailsOpen: {}
       }
       const STATUS = {
         pending: ['waiting for earlier steps', 'var(--pending)'],
@@ -219,11 +246,19 @@
       let loads = 0
       async function load() {
         const mine = ++loads
+        const target = state.overviewTarget
+        const requestedWorkspace = target?.workspaceId ?? state.pinned
         try {
           // Orca accepts only plain JSON: leave the key out instead of sending undefined.
-          const answer = await orca.plugin.request('state.get', state.pinned ? { workspaceId: state.pinned } : {}, { timeoutMs: 60000 })
+          const answer = await orca.plugin.request('state.get', requestedWorkspace ? { workspaceId: requestedWorkspace } : {}, { timeoutMs: 60000 })
           if (mine !== loads) return // a newer load started meanwhile; its answer wins
-          if (answer.workspaceId !== state.workspaceId) { state.sel = null; state.selected = null; state.picked = false }
+          if (answer.workspaceId !== state.workspaceId) {
+            state.sel = null
+            state.selected = null
+            state.picked = false
+            state.gateStep = null
+            state.queueDecision = null
+          }
           // The first answer after a start can come before Orca's Runs were read: choose again once they are, unless the person chose.
           if (state.indexing && !answer.indexing) {
             indexEpoch += 1
@@ -233,16 +268,192 @@
           }
           Object.assign(state, {
             workspaceId: answer.workspaceId, following: answer.following, indexing: answer.indexing, workspaces: answer.workspaces, playbooks: answer.playbooks,
-            runs: answer.runs, orcaRuns: answer.orcaRuns, sessions: answer.sessions ?? [], waitingElsewhere: answer.waitingElsewhere
+            runs: answer.runs, orcaRuns: answer.orcaRuns, sessions: answer.sessions ?? [], waitingElsewhere: answer.waitingElsewhere,
+            waitingDecisions: answer.waitingDecisions ?? [], loaded: true
           })
+          const opened = target && answer.workspaceId === target.workspaceId
+          if (target) {
+            state.overviewTarget = null
+            if (!opened) throw new Error('This workspace is no longer available.')
+            if (target.file && !answer.playbooks.some((book) => book.file === target.file && !book.errors.length)) {
+              state.catalog = null
+              void showCatalog()
+              throw new Error('This playbook is no longer available.')
+            }
+            if (target.runId && !answer.runs.some((run) => run.id === target.runId)) throw new Error('This run is no longer available.')
+            if (target.stepId && !state.waitingDecisions.some((decision) => decision.runId === target.runId && decision.stepId === target.stepId)) {
+              renderOverview()
+              throw new Error('This decision is no longer waiting.')
+            }
+            if (state.pinned) state.pinned = target.workspaceId
+            state.sel = target.runId ? `pb:${target.runId}` : 'definition'
+            state.picked = true
+            state.selected = null
+            state.selectedSession = null
+            state.view = null
+            state.gateStep = target.stepId ?? null
+            state.preferredFile = target.file ?? null
+            showHome('workspace')
+            state.queueDecision = target.stepId ? { runId: target.runId, stepId: target.stepId } : null
+            setMsg('')
+          }
+          renderOverview()
           renderControls()
           await render()
+          if (opened && state.home === 'workspace') {
+            const focus = target.stepId && $('gate').firstChild ? $('gate') : target.file ? $('playbook') : $('run')
+            focus.focus()
+          }
         } catch (error) {
-          setMsg(`Could not load: ${error.message ?? error}`, true)
+          if (mine !== loads) return
+          if (target && state.overviewTarget === target) state.overviewTarget = null
+          const message = `Could not load: ${error.message ?? error}`
+          if (state.home === 'workspace') setMsg(message, true)
+          else $('overview-message').textContent = message
         }
       }
 
       function workspace() { return state.workspaces.find((w) => w.id === state.workspaceId) ?? null }
+
+      function renderInputs() {
+        const box = $('run-inputs')
+        const playbook = state.playbooks.find((entry) => entry.file === $('playbook').value)
+        const fields = playbook?.inputFields ?? []
+        const key = JSON.stringify([state.workspaceId, playbook?.file, fields])
+        if (box.dataset.key === key) return
+        box.dataset.key = key
+        box.hidden = fields.length === 0
+        box.replaceChildren(...fields.map((field) => {
+          const label = document.createElement('label')
+          label.append(field.required ? `${field.label} *` : field.label)
+          const input = document.createElement('input')
+          input.type = 'text'
+          input.required = field.required
+          input.autocomplete = 'off'
+          input.name = field.name
+          input.maxLength = 2000
+          input.value = field.default ?? ''
+          if (field.format === 'ticket') input.placeholder = 'DEMO-123'
+          label.append(input)
+          if (field.description) {
+            const hint = document.createElement('small')
+            hint.textContent = field.description
+            label.append(hint)
+          }
+          return label
+        }))
+      }
+
+      const HOME_TABS = ['workspace', 'needs', 'catalog']
+
+      function showHome(view) {
+        state.home = view
+        $('overview-message').textContent = ''
+        $('needs-panel').hidden = view !== 'needs'
+        $('catalog-panel').hidden = view !== 'catalog'
+        $('workspace-view').hidden = view !== 'workspace'
+        $('runBadge').hidden = view !== 'workspace'
+        if (view !== 'workspace') {
+          state.queueDecision = null
+          hideGraphTooltip()
+        }
+        for (const name of HOME_TABS) {
+          const tab = $(name + '-tab')
+          tab.setAttribute('aria-selected', name === view)
+          tab.classList.toggle('on', name === view)
+          tab.tabIndex = name === view ? 0 : -1
+        }
+        renderOverview()
+      }
+
+      function projectGroups(rows) {
+        const projects = new Map()
+        for (const row of rows) {
+          const workspace = row.workspace
+          const key = workspace.projectId ?? workspace.path
+          const name = workspace.projectName ?? (workspace.path.split(/[\\/]/).filter(Boolean).pop() || workspace.name)
+          if (!projects.has(key)) projects.set(key, { name, rows: [] })
+          projects.get(key).rows.push(row)
+        }
+        return [...projects.values()].sort((a, b) => a.name.localeCompare(b.name, LOCALE))
+      }
+
+      function workspaceLabel(workspace) {
+        return workspace.branch && workspace.branch !== workspace.name ? `${workspace.name} · ${workspace.branch}` : workspace.name
+      }
+
+      function renderOverview() {
+        const count = $('needs-count')
+        const decisions = state.waitingDecisions
+        const label = state.loaded ? String(decisions.length) : '…'
+        if (count.textContent !== label) count.textContent = label
+        count.classList.toggle('has-decisions', decisions.length > 0)
+        if (state.home === 'workspace') return
+
+        const needs = state.home === 'needs'
+        const catalog = state.catalog ?? []
+        const rows = needs
+          ? decisions.flatMap((decision) => {
+              const workspace = state.workspaces.find((entry) => entry.id === decision.workspaceId)
+              if (!workspace) return []
+              const { workspaceId, runId, stepId } = decision
+              return [{ workspace, title: decision.stepTitle, detail: [decision.title, decision.ticket].filter(Boolean).join(' · '),
+                target: { workspaceId, runId, stepId } }]
+            })
+          : catalog.flatMap(({ workspace, playbooks, error }) => error
+              ? [{ workspace, title: workspaceLabel(workspace), error }]
+              : playbooks.map((book) => ({ workspace, title: book.title, file: book.file, detail: book.description,
+                  error: book.errors.join(' '), target: book.errors.length ? null : { workspaceId: workspace.id, file: book.file } })))
+        const panel = $(needs ? 'needs-panel' : 'catalog-panel')
+        const groups = projectGroups(rows)
+        const empty = needs ? (state.loaded ? 'No decisions are waiting.' : 'Reading decisions…')
+          : state.catalogError || (state.catalog ? 'No playbooks in local workspaces.' : 'Reading playbooks…')
+        const key = JSON.stringify([groups, empty])
+        if (key === panel.dataset.key) return
+        panel.dataset.key = key
+        const focused = panel.contains(document.activeElement) ? document.activeElement.dataset.target : null
+        panel.innerHTML = groups.length ? groups.map((group) => `<section class="project-block"><h2>${esc(group.name)}</h2>${
+          group.rows.map((row) => `<article class="overview-row"><div><h3>${needs ? '<span class="decision-mark" aria-hidden="true">◆</span> ' : ''}${esc(row.title)}</h3>
+            <div class="muted small">${esc(workspaceLabel(row.workspace))}${row.detail ? ' · ' + esc(row.detail) : ''}</div>
+            ${row.file ? `<code>.orca/playbooks/${esc(row.file)}</code>` : ''}
+            ${row.error ? `<div class="err small">${esc(row.error)}</div>` : ''}</div>
+            ${row.target ? `<button class="small" data-target="${esc(JSON.stringify(row.target))}">${needs ? 'Open decision' : 'Open playbook'}</button>` : ''}</article>`).join('')
+        }</section>`).join('') : `<p class="muted">${esc(empty)}</p>`
+        if (focused) ([...panel.querySelectorAll('button[data-target]')].find((item) => item.dataset.target === focused) ?? $(needs ? 'needs-tab' : 'catalog-tab')).focus()
+      }
+
+      async function openOverviewTarget(target) {
+        if (state.opening) return
+        state.opening = true
+        $('overview-message').textContent = ''
+        try {
+          const { opened } = await orca.plugin.request('workspace.goto', { workspaceId: target.workspaceId })
+          if (!opened) throw new Error('Could not open the workspace.')
+          state.overviewTarget = target
+          await load()
+        } catch (error) {
+          $('overview-message').textContent = error.message ?? String(error)
+        } finally {
+          state.opening = false
+        }
+      }
+
+      async function showCatalog() {
+        showHome('catalog')
+        if (state.catalogLoading) return
+        state.catalogLoading = true
+        try {
+          const { entries } = await orca.plugin.request('catalog.list', {}, { timeoutMs: 60000 })
+          state.catalog = entries
+          state.catalogError = ''
+        } catch (error) {
+          state.catalogError = `Could not read the catalog: ${error.message ?? error}`
+          if (state.home === 'catalog') $('overview-message').textContent = state.catalogError
+        } finally {
+          state.catalogLoading = false
+          renderOverview()
+        }
+      }
 
       function renderControls() {
         const ws = workspace()
@@ -260,7 +471,8 @@
           button.onclick = () => orca.plugin.request('workspace.goto', { workspaceId: button.dataset.goto }).catch((error) => setMsg(error.message ?? String(error), true))
         }
         const pb = $('playbook')
-        const current = pb.value
+        const current = state.preferredFile ?? pb.value
+        state.preferredFile = null
         pb.replaceChildren(...(state.playbooks.length
           ? state.playbooks.map((p) => option(p.file, p.errors.length ? `${p.title} (errors in the file)` : p.title, p.file === current))
           : [option('', 'No playbooks in .orca/playbooks/ of this workspace', true)]))
@@ -272,6 +484,7 @@
           ...state.orcaRuns.map((r) => ({ key: `orca:${r.id}`, label: `Orca Run: ${cut(r.title || r.objective || r.id, 60)}${r.active ? ' · running' : ''} · ${time(r.createdAt)}`, at: r.createdAt })),
           ...roots.map((session) => ({ key: `ses:${session.id}`, label: `Conversation: ${cut(session.title, 50)} · ${session.agents ? agentsWord(session.agents) : sessionStatus(session)[0]}`, at: session.updatedAt ?? session.since ?? 0 }))
         ].sort((a, b) => b.at - a.at)
+        if (state.playbooks.length) choices.push({ key: 'definition', label: 'Playbook definition' })
         if (!state.sel || !choices.some((choice) => choice.key === state.sel)) {
           const waiting = state.runs.find((r) => r.status === 'waiting') ?? state.runs.find((r) => r.status === 'running')
           const activeRun = state.orcaRuns.find((r) => r.active)
@@ -285,6 +498,7 @@
         }
         $('run').replaceChildren(...(choices.length ? choices.map((c) => option(c.key, c.label, c.key === state.sel)) : [option('', 'No runs or conversations in this workspace', true)]))
         $('indexNote').textContent = state.indexing ? "Reading Orca's records of agents and Runs; conversations show their agents in a few seconds." : ''
+        renderInputs()
         $('start').disabled = state.busy || !state.playbooks.some((p) => p.file === pb.value && !p.errors.length)
       }
 
@@ -365,6 +579,7 @@
       }
 
       async function render() {
+        if (state.home !== 'workspace') return
         const session = selectedSession()
         const run = playbookRun()
         const runId = orcaRunId()
@@ -382,7 +597,7 @@
         const playbook = state.playbooks.find((p) => p.file === $('playbook').value)
         $('description').textContent = playbook?.description ?? ''
         $('runBadge').innerHTML = run ? statusText(RUN[run.status] ?? run.status, RUN_COLOR[run.status]) : ''
-        if (!state.sel && playbook?.errors?.length) setMsg('Errors in the file:\n' + playbook.errors.join('\n'), true)
+        if (kind === 'preview' && playbook?.errors?.length) setMsg('Errors in the file:\n' + playbook.errors.join('\n'), true)
         const sessionView = key ? state.sessionViews[key] : null
         const nodes = kind === 'session' ? (sessionView?.agents ?? []).map(agentNode)
           : kind === 'preview' ? (playbook?.steps ?? []).map((step) => ({ id: step.id, title: step.title, sub: step.kind === 'gate' ? 'gate' : step.kind === 'script' ? `script · ${step.run}` : [step.agent, step.model].filter(Boolean).join(' · '), label: 'plan', color: 'var(--plan)', needs: step.needs, depth: step.depth, kind: step.kind, loop: step.loop, attempt: 1 }))
@@ -848,7 +1063,8 @@
 
       function renderGate(run) {
         const box = $('gate')
-        const open = run && run.steps.find((step) => step.kind === 'gate' && run.tasks[step.id]?.gateId && !run.tasks[step.id]?.decision)
+        const openSteps = run?.steps.filter((step) => step.kind === 'gate' && run.tasks[step.id]?.gateId && !run.tasks[step.id]?.decision)
+        const open = openSteps?.find((step) => step.id === state.gateStep) ?? openSteps?.[0]
         if (!open) { box.innerHTML = ''; box.dataset.key = ''; return }
         const task = run.tasks[open.id]
         const key = `${run.id}:${task.taskId}:${task.gateId}`
@@ -872,30 +1088,62 @@
       async function resolve(runId, stepId, choice) {
         const comment = $('comment')?.value ?? ''
         if (choice === 'revise' && !comment.trim()) { setMsg('Add a comment to Revise.', true); return }
+        const origin = state.queueDecision
         for (const button of $('gate').querySelectorAll('button')) button.disabled = true
         try {
           setMsg('Sending the decision…')
           await orca.plugin.request('gate.resolve', { runId, stepId, choice, comment }, { timeoutMs: 120000 })
           setMsg(choice === 'ok' ? 'Approved.' : 'Sent back with the comment.')
           await load()
+          if (origin?.runId === runId && origin.stepId === stepId && origin === state.queueDecision && state.home === 'workspace') {
+            showHome('needs')
+            const next = $('needs-panel').querySelector('button[data-target]') ?? $('needs-tab')
+            next.focus()
+          }
         } catch (error) {
           for (const button of $('gate').querySelectorAll('button')) button.disabled = false
           setMsg(`Failed: ${error.message ?? error}`, true)
         }
       }
 
-      $('workspace').onchange = (event) => { state.pinned = event.target.value; state.sel = null; void load() }
-      $('playbook').onchange = () => { $('start').disabled = !state.playbooks.some((p) => p.file === $('playbook').value && !p.errors.length); setMsg(''); void render() }
-      $('run').onchange = (event) => { state.picked = true; state.sel = event.target.value || null; state.selected = null; state.view = null; state.selectedSession = null; state.followBottom = true; state.showAllAgents = false; void render() }
+      function selectHome(view) {
+        if (view === 'catalog') { void showCatalog(); return }
+        showHome(view)
+        if (view === 'workspace') void load()
+      }
+
+      for (const [index, name] of HOME_TABS.entries()) {
+        const tab = $(name + '-tab')
+        tab.onclick = () => selectHome(name)
+        tab.onkeydown = (event) => {
+          const offsets = { ArrowLeft: -1, ArrowRight: 1, Home: -index, End: HOME_TABS.length - 1 - index }
+          if (!Object.hasOwn(offsets, event.key)) return
+          event.preventDefault()
+          const next = HOME_TABS[(index + offsets[event.key] + HOME_TABS.length) % HOME_TABS.length]
+          selectHome(next)
+          $(next + '-tab').focus()
+        }
+      }
+      for (const name of ['needs', 'catalog']) {
+        $(name + '-panel').onclick = (event) => {
+          const button = event.target.closest('button[data-target]')
+          if (button) void openOverviewTarget(JSON.parse(button.dataset.target))
+        }
+      }
+      $('workspace').onchange = (event) => { state.queueDecision = null; state.pinned = event.target.value; state.sel = null; void load() }
+      $('playbook').onchange = () => { renderInputs(); $('start').disabled = !state.playbooks.some((p) => p.file === $('playbook').value && !p.errors.length); setMsg(''); void render() }
+      $('run').onchange = (event) => { state.queueDecision = null; state.picked = true; state.sel = event.target.value || null; state.selected = null; state.gateStep = null; state.view = null; state.selectedSession = null; state.followBottom = true; state.showAllAgents = false; void render() }
       $('refresh').onclick = () => { state.nodes = {}; state.lines = {}; state.timelines = {}; state.timelineErrors = {}; state.sessionViews = {}; void load() }
       $('start').onclick = async () => {
         const file = $('playbook').value
         if (!file || !state.workspaceId) return
+        state.queueDecision = null
         state.busy = true
         $('start').disabled = true
         setMsg('Creating the run and its tasks in Orca…')
         try {
-          const { run } = await orca.plugin.request('run.start', { workspaceId: state.workspaceId, file }, { timeoutMs: 120000 })
+          const inputs = Object.fromEntries([...$('run-inputs').querySelectorAll('input')].map((input) => [input.name, input.value]))
+          const { run } = await orca.plugin.request('run.start', { workspaceId: state.workspaceId, file, inputs }, { timeoutMs: 120000 })
           state.sel = `pb:${run.id}`
           state.selected = null
           state.view = null

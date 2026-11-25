@@ -20,8 +20,9 @@ git -C "$demo" add .
 printf '%s\n' "$demo"
 ```
 
-Add that directory to Orca as a Git repository. Open **Playbooks**, choose
-**Review-gated fix**, and click **Start**.
+Add that directory to Orca as a Git repository. In **Playbooks**, open **Catalog**,
+find **Review-gated fix** in that repository, and choose **Open playbook**. Click **Start**
+in the workspace view.
 
 1. Open **Graph**. Both research agents and the reproduction script are ready
    at the start. The plan waits for all three results.
@@ -65,3 +66,19 @@ from this run.
 - [Verification script](.orca/playbooks/scripts/check.py) checks SHA-256
   digests, the allowed Git diff, and the deployed copy. A review with
   `BLOCK`, a missing report, or a mismatched digest stops dependent work.
+
+### Generate the example YAML from BPMN
+
+With Python 3.9 or later, run this from the plugin repository:
+
+```sh
+python3 tools/bpmn-to-orca.py examples/asdlc/process.bpmn \
+  examples/asdlc/orca-bindings.json > /tmp/review-gated-fix.yaml
+```
+
+The BPMN provides the task names, parallel dependencies, and decision and
+revision paths. The [Orca bindings](orca-bindings.json) provide model and script
+settings, prompts, revision limits, and the meaning of named transitions. In
+this example a blocked check becomes a failed script step. The script still
+owns the verdict and digest check. The generator supports the constructs
+exercised by this example and reports unsupported nodes or branches.

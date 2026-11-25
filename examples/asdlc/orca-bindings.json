@@ -1,0 +1,84 @@
+{
+  "description": "Parallel research, a human plan decision, and an independently reviewed local deployment.",
+  "flows": {
+    "flow-14": "revise",
+    "flow-15": "accept",
+    "flow-16": "limit",
+    "flow-18": "pass",
+    "flow-19": "block",
+    "flow-22": "pass",
+    "flow-23": "block",
+    "flow-26": "block",
+    "flow-27": "pass"
+  },
+  "revisionLimits": {
+    "flow-14": 2
+  },
+  "steps": {
+    "research-code": {
+      "agent": "codex",
+      "keep_open": true,
+      "prompt": "Read task.md, duration.py, and test_duration.py. Identify the cause,\nthe allowed file change, and evidence from the test. Write only your\nstep report in the run directory.\n"
+    },
+    "research-rules": {
+      "agent": "codex",
+      "keep_open": true,
+      "prompt": "Read task.md. List the acceptance checks, edit scope, conditions that\nblock deployment, and rollback. Write only your step report in the\nrun directory.\n"
+    },
+    "reproduce": {
+      "script": {
+        "run": "check.py",
+        "timeout_sec": 30
+      }
+    },
+    "plan": {
+      "agent": "codex",
+      "keep_open": true,
+      "prompt": "Read task.md and research-code.md, research-rules.md, and reproduce.txt\nin {{run_dir}}. Write plan.md in the run directory using both reports.\nInclude the edit scope, exact test command, destination, rollback,\nand both review points. Apply the operator comment on a revised attempt.\nWrite only the plan file in the run directory.\n"
+    },
+    "prepare-plan-review": {
+      "script": {
+        "run": "check.py",
+        "timeout_sec": 30
+      }
+    },
+    "review-plan": {
+      "agent": "codex",
+      "keep_open": true,
+      "prompt": "Compare task.md with {{run_dir}}/plan.md independently. Review the\nscope, test, human decision, candidate review, deployment, and rollback.\nCompute the SHA-256 of the exact plan bytes you reviewed.\nWrite {{run_dir}}/review-plan.md as JSON with the keys verdict (PASS or\nBLOCK), subject_sha256 (the plan digest), and reason (a nonempty string).\nWrite only this report and put the JSON directly in it. A completed\nreview can report either verdict.\n"
+    },
+    "decide": {
+      "gate": {
+        "question": "Approve this plan, or send it back for revision?"
+      }
+    },
+    "verify-plan": {
+      "script": {
+        "run": "check.py",
+        "timeout_sec": 30
+      }
+    },
+    "fix": {
+      "agent": "codex",
+      "keep_open": true,
+      "prompt": "Read task.md, plan.md, approved-plan.json, and reproduce.txt. The last\nthree files are in {{run_dir}}. Edit only duration.py and write a short\nstep report. Leave the Git index and test alone. The next step reruns\nthe test and records its result.\n"
+    },
+    "verify-candidate": {
+      "script": {
+        "run": "check.py",
+        "timeout_sec": 30
+      }
+    },
+    "review-deploy": {
+      "agent": "codex",
+      "keep_open": true,
+      "prompt": "Read task.md and plan.md, fix.diff, candidate.json, reproduce.txt, and\nverify-candidate.txt in {{run_dir}}. Review the diff, test evidence,\ndeployment destination, and rollback. Compute the SHA-256 of the\nexact candidate.json bytes you reviewed. Write only\n{{run_dir}}/review-deploy.md as JSON with verdict (PASS or BLOCK),\nsubject_sha256 (the candidate digest), and reason (a nonempty string).\nPut the JSON directly in the report.\n"
+    },
+    "deploy": {
+      "script": {
+        "run": "check.py",
+        "timeout_sec": 30
+      }
+    }
+  }
+}
