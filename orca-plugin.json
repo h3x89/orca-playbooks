@@ -2,8 +2,22 @@
   "manifestVersion": 2,
   "id": "playbooks",
   "name": "Playbooks",
-  "version": "0.5.5",
-  "description": "Workflows of agents and human decision gates kept as YAML in the repository, run through Orca orchestration and drawn as a live graph.",
+  "version": "0.5.6",
+  "description": "Run parallel checks and agent workflows from YAML in your repository. Follow progress in a live graph and approve the next step in Orca.",
+  "author": { "name": "h3x89" },
+  "repository": "https://github.com/h3x89/orca-playbooks",
+  "icon": "docs/images/playbooks-icon.png",
+  "cover": {
+    "path": "docs/images/pull-request-review.png",
+    "alt": "Two completed pull request checks feed a summary and a review waiting for approval in Orca Playbooks"
+  },
+  "screenshots": [
+    {
+      "path": "docs/images/pull-request-timeline.png",
+      "alt": "Playbooks timeline showing overlapping test and scope checks, followed by a human approval",
+      "caption": "Two checks run in parallel before the approval."
+    }
+  ],
   "license": "MIT",
   "engines": {
     "orca": ">=1.4.263"
@@ -16,7 +30,7 @@
       {
         "id": "playbooks",
         "title": "Playbooks",
-        "icon": "blocks",
+        "icon": "book",
         "entry": "panel/index.html",
         "ui": "html"
       }
@@ -42,7 +56,7 @@
       {
         "id": "runs",
         "text": "Playbooks",
-        "icon": "blocks"
+        "icon": "book"
       }
     ]
   },

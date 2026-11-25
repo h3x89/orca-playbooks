@@ -6,9 +6,9 @@
       :root {
         --fg: var(--orca-foreground, #e6e6e6);
         --bg: var(--orca-background, #1b1b1b);
-        --muted: color-mix(in srgb, var(--fg) 58%, transparent);
-        --line: color-mix(in srgb, var(--fg) 22%, transparent);
-        --card: color-mix(in srgb, var(--fg) 6%, var(--bg));
+        --muted: color-mix(in srgb, var(--fg) 70%, var(--bg));
+        --line: color-mix(in srgb, var(--fg) 24%, var(--bg));
+        --card: color-mix(in srgb, var(--fg) 4%, var(--bg));
         --plan: color-mix(in srgb, var(--fg) 30%, transparent);
         --pending: #8a8f98;
         --event-start: #88adff;
@@ -18,32 +18,36 @@
         --gate: #b57edc;
       }
       * { box-sizing: border-box; }
-      body { margin: 0; padding: 12px; font: 13px system-ui, sans-serif; color: var(--fg); background: var(--bg); }
-      h1 { font-size: 15px; margin: 0 0 8px; display: flex; align-items: center; gap: 8px; }
+      body { margin: 0; padding: 12px; font: 13px/1.45 system-ui, sans-serif; color: var(--fg); background: var(--bg); }
+      h1 { font-size: 17px; margin: 0 0 8px; display: flex; align-items: baseline; flex-wrap: wrap; gap: 4px 8px; }
       label { display: block; color: var(--muted); font-size: 11px; margin: 8px 0 3px; }
-      select, textarea, button { font: inherit; color: var(--fg); background: var(--card); border: 1px solid var(--line); border-radius: 6px; }
+      select, textarea, button { font: inherit; color: var(--fg); background: var(--bg); border: 1px solid var(--line); border-radius: 6px; }
       select { width: 100%; padding: 5px 6px; }
       textarea { width: 100%; padding: 6px; min-height: 52px; resize: vertical; }
       button { padding: 5px 12px; cursor: pointer; }
       button.small { padding: 2px 8px; font-size: 11.5px; }
       button:disabled { opacity: .5; cursor: default; }
+      :is(button, select, textarea):focus-visible { outline: 2px solid var(--fg); outline-offset: 2px; }
       code { font-size: 11px; }
       pre { white-space: pre-wrap; word-break: break-word; margin: 6px 0 0; padding: 8px; border-radius: 6px; background: color-mix(in srgb, var(--fg) 4%, var(--bg)); border: 1px solid var(--line); font-size: 11.5px; max-height: 260px; overflow: auto; }
       .row { display: flex; gap: 8px; align-items: center; margin-top: 8px; flex-wrap: wrap; }
-      .primary { background: #2f6bf2; border-color: #2f6bf2; color: #fff; }
-      .ok { border-color: var(--gate); font-weight: 600; }
+      .primary { background: #315cb4; border-color: #315cb4; color: #fff; font-weight: 600; }
       .msg { margin-top: 6px; color: var(--muted); min-height: 14px; white-space: pre-wrap; }
+      .msg:empty { display: none; }
       .err { color: var(--failed); }
       h1 .status { font-weight: 500; }
       .status { display: inline-flex; gap: 5px; align-items: baseline; color: var(--muted); white-space: normal; }
       .status i { color: var(--status-color); font: inherit; }
       #runSource { margin-top: 4px; }
       .card { border: 1px solid var(--line); border-radius: 8px; padding: 10px; margin-top: 10px; background: var(--card); }
-      .where { display: flex; align-items: center; gap: 8px; justify-content: space-between; flex-wrap: wrap; padding: 6px 8px; border-radius: 8px; background: var(--card); border: 1px solid var(--line); }
-      .where > span { min-width: 0; overflow-wrap: anywhere; }
+      .where { display: flex; align-items: center; gap: 8px; justify-content: space-between; padding: 6px 8px; border-radius: 8px; background: var(--card); }
+      .where > span { flex: 1; min-width: 0; overflow-wrap: anywhere; }
+      .where > button { flex: none; }
       .where b { font-weight: 600; }
       .banner { margin-top: 8px; padding: 6px 8px; border-radius: 8px; border: 1px solid var(--line); display: flex; justify-content: space-between; align-items: center; gap: 8px; }
-      .gate h2 { font-size: 13px; margin: 0 0 6px; }
+      .gate { border-color: color-mix(in srgb, var(--gate) 38%, var(--bg)); border-inline-start: 3px solid var(--gate); background: color-mix(in srgb, var(--gate) 10%, var(--bg)); }
+      .gate h2 { font-size: 14px; margin: 0 0 6px; }
+      .gate pre { background: var(--bg); }
       .decision-mark { color: var(--gate); }
       .graph { margin-top: 10px; }
       svg text { fill: var(--fg); font: 12px system-ui, sans-serif; }
@@ -75,10 +79,16 @@
       .chat-notice { font-size: 11px; padding: 3px 6px; line-height: 1.25; overflow-wrap: anywhere; }
       .node-title { font-size: 12px; line-height: 14px; overflow-wrap: anywhere; display: -webkit-box; -webkit-box-orient: vertical; -webkit-line-clamp: 2; overflow: hidden; }
       .tabs { display: flex; gap: 4px; margin-top: 10px; flex-wrap: wrap; }
-      .tabs button { padding: 3px 7px; font-size: 12px; }
-      .tabs button.on { border-color: var(--fg); font-weight: 600; }
-      .overview-nav { display: flex; align-items: baseline; justify-content: space-between; flex-wrap: wrap; gap: 6px; margin-bottom: 10px; }
+      .tabs button { padding: 3px 7px; border-color: transparent; font-size: 12px; }
+      .tabs button:hover, .tabs button.on { background: var(--card); }
+      .tabs button.on { border-color: var(--line); font-weight: 600; }
+      .overview-nav { display: flex; align-items: baseline; justify-content: space-between; flex-wrap: wrap; gap: 6px; margin-bottom: 8px; }
       .overview-nav .tabs { margin-top: 0; }
+      @media (max-width: 280px) {
+        .overview-nav .tabs { gap: 2px; }
+        .overview-nav .tabs button { padding-inline: 3px; font-size: 11px; }
+        .overview-count { padding-inline: 2px; margin-left: 2px; }
+      }
       .overview-count { display: inline-block; min-width: 1.5em; padding: 0 4px; margin-left: 3px; border-radius: 1em; background: var(--card); text-align: center; font-variant-numeric: tabular-nums; }
       #needs-count.has-decisions { background: color-mix(in srgb, var(--gate) 25%, var(--bg)); }
       .project-block { border-top: 1px solid var(--line); margin-top: 10px; padding-top: 9px; }
@@ -155,8 +165,9 @@
       <select id="workspace"></select>
     </div>
     <div id="banner"></div>
+    <div id="gate" tabindex="-1"></div>
 
-    <label for="playbook">Playbook from <code>.orca/playbooks/</code></label>
+    <label for="playbook">Playbook</label>
     <select id="playbook"></select>
     <div id="run-inputs" hidden></div>
     <div id="description" class="muted small" style="margin-top:4px"></div>
@@ -170,7 +181,6 @@
     <select id="run"></select>
     <div id="runSource" class="muted small"></div>
     <div id="indexNote" class="muted small" style="margin-top:4px"></div>
-    <div id="gate" tabindex="-1"></div>
     <div id="sessionView"></div>
     <div id="tabs" class="tabs"></div>
     <div id="graphNote"></div>
@@ -209,7 +219,7 @@
       const state = {
         workspaceId: null, following: false, pinned: null, workspaces: [], playbooks: [], runs: [], orcaRuns: [], waitingElsewhere: [],
         sel: null, nodes: {}, selected: null, lines: {}, busy: false, openOutputs: new Set(),
-        timelineRow: null, chatFeedback: null,
+        timelineRow: null, chatFeedback: null, gateRequests: new Map(),
         sessions: [], home: 'workspace', queueDecision: null, waitingDecisions: [], catalog: null, view: null, timelines: {}, timelineErrors: {}, stale: new Set(), sessionViews: {}, showAllAgents: false, selectedSession: null, followBottom: true, detailsOpen: {}
       }
       const STATUS = {
@@ -479,7 +489,7 @@
         const ws = workspace()
         const mode = state.pinned ? 'pinned' : state.following ? 'follows the active workspace' : 'cannot tell which one is active'
         $('where').innerHTML = ws
-          ? `<span><b>${esc(ws.name)}</b>${ws.branch ? ' · ' + esc(ws.branch) : ''} <span class="muted small">— ${esc(mode)}</span></span>` +
+          ? `<span><b>${esc(ws.name)}</b>${ws.branch && ws.branch !== ws.name ? ' · ' + esc(ws.branch) : ''} <span class="muted small">— ${esc(mode)}</span></span>` +
             `<button id="pin" class="small">${state.pinned ? 'Unpin' : 'Pin'}</button>`
           : '<span class="muted">No workspace in focus.</span>'
         if ($('pin')) $('pin').onclick = () => { state.pinned = state.pinned ? null : state.workspaceId; state.sel = null; void load() }
@@ -1239,6 +1249,16 @@
         }
       }
 
+      function renderGateRequest(key) {
+        const box = $('gate')
+        const request = state.gateRequests.get(key)
+        if (box.dataset.key !== key || !request) return
+        const message = $('gate-message')
+        message.textContent = request.message
+        message.classList.toggle('err', !request.pending)
+        for (const button of box.querySelectorAll('button')) button.disabled = request.pending
+      }
+
       function renderGate(run) {
         const box = $('gate')
         const openSteps = run?.steps.filter((step) => step.kind === 'gate' && run.tasks[step.id]?.gateId && !run.tasks[step.id]?.decision)
@@ -1256,21 +1276,33 @@
         const loops = open.loop ? `Revise sends the run back to step "${esc(open.loop.goto)}" (${open.loop.maxLoops - run.loops} of ${open.loop.maxLoops} left).` : 'Revise stops the run.'
         const warning = task.error ? `<div class="err small" style="margin-top:6px">${esc(task.error)}</div>` : ''
         box.innerHTML = `<div class="card gate"><h2><span class="decision-mark" aria-hidden="true">◆</span> ${esc(open.title)}</h2><div>${esc(open.question)}</div>${warning}${inputs}` +
-          `<label for="comment">Comment (required for Revise)</label><textarea id="comment" placeholder="For example: take the current time into account"></textarea>` +
-          `<div class="row"><button id="gateOk" class="ok">OK</button><button id="gateRevise">Revise</button></div>` +
+          `<label for="comment">Comment (required for Revise)</label><textarea id="comment" placeholder="Explain what should change"></textarea>` +
+          `<div class="row"><button id="gateOk" class="primary">Approve</button><button id="gateRevise">Revise</button></div>` +
+          `<div id="gate-message" class="msg" role="status"></div>` +
           `<div class="muted small" style="margin-top:6px">${loops}</div></div>`
         $('gateOk').onclick = () => resolve(run.id, open.id, 'ok')
         $('gateRevise').onclick = () => resolve(run.id, open.id, 'revise')
+        renderGateRequest(key)
       }
 
       async function resolve(runId, stepId, choice) {
-        const comment = $('comment')?.value ?? ''
-        if (choice === 'revise' && !comment.trim()) { setMsg('Add a comment to Revise.', true); return }
+        const key = $('gate').dataset.key
+        if (state.gateRequests.get(key)?.pending) return
+        const field = $('comment')
+        const comment = field.value
+        const message = $('gate-message')
+        if (choice === 'revise' && !comment.trim()) {
+          message.textContent = 'Add a comment to Revise.'
+          message.classList.add('err')
+          field.focus()
+          return
+        }
         const origin = state.queueDecision
-        for (const button of $('gate').querySelectorAll('button')) button.disabled = true
+        state.gateRequests.set(key, { pending: true, message: 'Sending the decision…' })
+        renderGateRequest(key)
         try {
-          setMsg('Sending the decision…')
           await orca.plugin.request('gate.resolve', { runId, stepId, choice, comment }, { timeoutMs: 120000 })
+          state.gateRequests.delete(key)
           setMsg(choice === 'ok' ? 'Approved.' : 'Sent back with the comment.')
           await load()
           if (origin?.runId === runId && origin.stepId === stepId && origin === state.queueDecision && state.home === 'workspace') {
@@ -1279,8 +1311,12 @@
             next.focus()
           }
         } catch (error) {
-          for (const button of $('gate').querySelectorAll('button')) button.disabled = false
-          setMsg(`Failed: ${error.message ?? error}`, true)
+          const failure = `Could not send the decision: ${error.message ?? error}`
+          state.gateRequests.set(key, { pending: false, message: failure })
+          renderGateRequest(key)
+          if (state.home !== 'workspace' || $('gate').dataset.key !== key) {
+            $('overview-message').textContent = failure
+          }
         }
       }
 

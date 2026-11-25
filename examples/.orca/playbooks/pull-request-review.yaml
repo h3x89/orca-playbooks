@@ -1,0 +1,22 @@
+title: Pull request review
+description: Review a sample change to checkout copy. Two checks run in parallel before you decide.
+
+steps:
+  - id: tests
+    title: Check test results
+    script: { run: review-demo.sh, timeout_sec: 30 }
+
+  - id: scope
+    title: Check change scope
+    script: { run: review-demo.sh, timeout_sec: 30 }
+
+  - id: summary
+    title: Summarize findings
+    needs: [tests, scope]
+    script: { run: review-demo.sh, timeout_sec: 30 }
+
+  - id: approve
+    title: Approve review
+    needs: [summary]
+    gate:
+      question: 'Sample PR #42 updates checkout copy. Approve this demo review?'
