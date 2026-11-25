@@ -2,7 +2,7 @@ import { assert, test } from 'orca/testing'
 import { execFileSync } from 'node:child_process'
 import { readdirSync, readFileSync } from 'node:fs'
 import { fileURLToPath } from 'node:url'
-import { depths, loopSteps, parsePlaybook, renderPrompt, topologicalOrder } from './playbook'
+import { depths, loopSteps, parsePlaybook, renderPrompt, resolveInputs, topologicalOrder } from './playbook'
 
 const WEATHER = `
 title: Weather
@@ -168,4 +168,21 @@ test('the ASDLC example and BPMN agree on steps, dependencies, and Revise', () =
 
 test('fills known placeholders and leaves unknown ones', () => {
   assert.equal(renderPrompt('{{ date }} {{inputs.lat}} {{nope}}', { date: '2026-11-18', 'inputs.lat': '52.23' }), '2026-11-18 52.23 {{nope}}')
+})
+
+test('required ticket rejects missing, empty, invalid and unknown values while keeping defaults', () => {
+  const parsed = parsePlaybook('ticket', [
+    'inputs:',
+    '  ticket: { label: Ticket, required: true, format: ticket }',
+    '  mode: { default: draft }',
+    'steps:',
+    '  - { id: report, script: { run: report.sh } }'
+  ].join('\n'))
+  assert.deepEqual(parsed.errors, [])
+  const fields = parsed.playbook!.inputFields
+  assert.throws(() => resolveInputs(fields, {}), /Ticket is required/)
+  assert.throws(() => resolveInputs(fields, { ticket: ' ' }), /Ticket is required/)
+  assert.throws(() => resolveInputs(fields, { ticket: 'bad' }), /DEMO-123/)
+  assert.throws(() => resolveInputs(fields, { ticket: 'DEMO-123', typo: 'x' }), /Unknown input/)
+  assert.deepEqual(resolveInputs(fields, { ticket: ' DEMO-123 ' }), { ticket: 'DEMO-123', mode: 'draft' })
 })

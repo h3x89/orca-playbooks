@@ -28,6 +28,24 @@ function idsOf(message: CliMessage): { taskId?: string; dispatchId?: string } {
   }
 }
 
+function completion(task: CliTask, dispatch?: DispatchTimes): number | undefined {
+  const result = resultFields(task.result)
+  const status = taskStatus(task)
+  const open = ['pending', 'ready', 'dispatched', 'blocked'].includes(status)
+  const ends = [
+    dispatch?.completedAt,
+    typeof result.script === 'string' ? parseTime(result.completedAt) : undefined,
+    open ? undefined : parseTime(task.completed_at)
+  ].filter((at): at is number => at !== undefined)
+  return ends.length ? Math.max(...ends) : undefined
+}
+
+// A whole-second timestamp can precede an event that must have happened first.
+function alignRoundedTime(at: number | undefined, earliest: number | undefined, end = Number.POSITIVE_INFINITY): number | undefined {
+  if (at === undefined || earliest === undefined || at % 1000 !== 0) return at
+  return earliest > at && earliest < at + 1000 && earliest < end ? earliest : at
+}
+
 /**
  * Events of a Run in time order. Each task gets a lane (a column for drawing parallel work), reused once
  * the task before it in that lane has ended.
@@ -37,6 +55,12 @@ export function buildTimeline(tasks: CliTask[], gates: CliGate[], messages: CliM
   const titles = new Map(tasks.map((task) => [task.id, task.display_name || task.task_title || task.id]))
   const attempts = new Map(tasks.map((task) => [task.id, taskAttempt(task)]))
   const gateTasks = new Set(gates.map((gate) => gate.task_id))
+  const completed = new Map(tasks.map((task) => [task.id, completion(task, task.dispatch_id ? dispatches[task.dispatch_id] : undefined)]))
+  const dependencyEnds = new Map(tasks.map((task) => [
+    task.id,
+    Math.max(...taskDeps(task.deps).map((id) => completed.get(id) ?? Number.NEGATIVE_INFINITY))
+  ]))
+  const adjusted = new Set<string>()
   const spans: { taskId: string; start: number; end?: number }[] = []
   let order = 0
   const push = (event: Omit<TimelineEvent, 'order'>) => {
@@ -52,10 +76,10 @@ export function buildTimeline(tasks: CliTask[], gates: CliGate[], messages: CliM
     const open = ['pending', 'ready', 'dispatched', 'blocked'].includes(status)
     const result = resultFields(task.result)
     const recordedScript = typeof result.script === 'string' ? result.script : undefined
-    const started = dispatch?.dispatchedAt ?? (recordedScript ? parseTime(result.startedAt) : undefined)
-    const ends = [dispatch?.completedAt, recordedScript ? parseTime(result.completedAt) : undefined, open ? undefined : parseTime(task.completed_at)]
-      .filter((time): time is number => time !== undefined)
-    const end = ends.length ? Math.max(...ends) : undefined
+    const recordedStart = dispatch?.dispatchedAt ?? (recordedScript ? parseTime(result.startedAt) : undefined)
+    const end = completed.get(task.id)
+    const started = alignRoundedTime(recordedStart, dependencyEnds.get(task.id), end)
+    if (started !== recordedStart) adjusted.add(task.id)
     // Orca task timestamps may be rounded down to a second; never put the end before a known start.
     const ended = end !== undefined && started !== undefined ? Math.max(end, started) : end
     const who = [dispatch?.agent ?? (recordedScript ? `script ${recordedScript}` : undefined), dispatch?.model].filter(Boolean).join(' · ')
@@ -88,10 +112,12 @@ export function buildTimeline(tasks: CliTask[], gates: CliGate[], messages: CliM
 
   for (const gate of gates) {
     const title = (gate.task_id && titles.get(gate.task_id)) || 'Gate'
-    const created = parseTime(gate.created_at)
+    const prerequisiteEnd = gate.task_id ? dependencyEnds.get(gate.task_id) : undefined
+    const taskEnd = gate.task_id ? completed.get(gate.task_id) : undefined
+    const created = alignRoundedTime(parseTime(gate.created_at), prerequisiteEnd, taskEnd)
     if (created !== undefined) push({ at: created, kind: 'gate', taskId: gate.task_id, title, detail: gate.question })
-    const resolved = parseTime(gate.resolved_at)
-    if (resolved !== undefined) push({ at: resolved, kind: 'decision', taskId: gate.task_id, title, detail: gate.resolution ?? undefined, duration: created !== undefined ? resolved - created : undefined })
+    const resolved = alignRoundedTime(parseTime(gate.resolved_at), created)
+    if (resolved !== undefined) push({ at: resolved, kind: 'decision', taskId: gate.task_id, title, detail: gate.resolution ?? undefined, duration: created !== undefined && resolved >= created ? resolved - created : undefined })
   }
 
   // Lanes: earliest-starting task first, into the lowest lane free at its start.
@@ -109,7 +135,9 @@ export function buildTimeline(tasks: CliTask[], gates: CliGate[], messages: CliM
     if (lane === undefined) continue
     for (const event of events) if (event.taskId === span.taskId) Object.assign(event, { spanStart: span.start, ...(span.end !== undefined ? { spanEnd: span.end } : {}) })
   }
-  events.sort((a, b) => a.at - b.at || a.order - b.order)
+  const afterCompletion = (event: TimelineEvent) =>
+    event.taskId && adjusted.has(event.taskId) && ['started', 'follow-up'].includes(event.kind) ? 1 : 0
+  events.sort((a, b) => a.at - b.at || afterCompletion(a) - afterCompletion(b) || a.order - b.order)
   return { events: merged(events), lanes: laneEnds.length }
 }
 

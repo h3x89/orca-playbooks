@@ -132,3 +132,40 @@ test('sessions come from a worktree ps row: helpers by parent, children by kind,
   assert.equal(sessions[2].title, 'Session')
   assert.equal(sessions[0].parentPaneKey, undefined)
 })
+
+test('orders a whole-second successor after its known subsecond dependency', () => {
+  const second = Date.parse('2026-11-25T00:51:16Z')
+  const script = { id: 'retest', status: 'completed', result: {
+    script: 'check.py', startedAt: second + 162, completedAt: second + 582
+  } }
+  const review = { id: 'review', status: 'completed', dispatch_id: 'd', deps: ['retest'] }
+  const dispatches = { d: { dispatchedAt: second, completedAt: second + 2200 } }
+  const dependent = buildTimeline([review, script], [], [], dispatches)
+  assert.equal(dependent.lanes, 1)
+  assert.equal(dependent.events.find((event) => event.taskId === 'review' && event.kind === 'started')?.at, second + 582)
+
+  const independent = buildTimeline([{ ...review, deps: [] }, script], [], [], dispatches)
+  assert.equal(independent.lanes, 2)
+  assert.equal(independent.events.find((event) => event.taskId === 'review' && event.kind === 'started')?.at, second)
+
+  const distant = buildTimeline([review, { ...script, result: { ...script.result, completedAt: second + 1582 } }], [], [], dispatches)
+  assert.equal(distant.lanes, 2, 'a larger recorded overlap is kept as evidence')
+})
+
+test('orders a rounded gate and decision after the review in the same second', () => {
+  const second = Date.parse('2026-11-25T04:03:35Z')
+  const review = { id: 'review', status: 'completed', result: {
+    script: 'review.py', startedAt: second + 315, completedAt: second + 422
+  } }
+  const decision = { id: 'decide', status: 'completed', deps: ['review'], completed_at: '2026-11-25T04:03:35.790Z' }
+  const gate = { task_id: 'decide', status: 'resolved', created_at: '2026-11-25 04:03:35', resolved_at: '2026-11-25 04:03:35', resolution: 'ok' }
+  const { events, lanes } = buildTimeline([decision, review], [gate], [], {})
+  assert.equal(lanes, 1)
+  assert.deepEqual(events.map(({ kind, at }) => [kind, at - second]), [
+    ['started', 315], ['done', 422], ['gate', 422], ['decision', 422], ['done', 790]
+  ])
+  assert.equal(events.find((event) => event.kind === 'decision')?.duration, 0)
+  const later = { ...review, result: { ...review.result, completedAt: second + 1422 } }
+  const inconsistent = buildTimeline([decision, later], [gate], [], {})
+  assert.equal(inconsistent.events.find((event) => event.kind === 'gate')?.at, second)
+})

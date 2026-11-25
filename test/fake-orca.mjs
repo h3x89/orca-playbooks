@@ -41,7 +41,8 @@ const sqliteNow = () => new Date().toISOString().replace('T', ' ').slice(0, 19)
 const isoNow = () => new Date().toISOString()
 const flag = (name) => {
   const index = args.indexOf(name)
-  return index >= 0 ? args[index + 1] : undefined
+  if (index >= 0) return args[index + 1]
+  return args.find((argument) => argument.startsWith(name + '='))?.slice(name.length + 1)
 }
 const id = (prefix) => `${prefix}_${String(++state.n).padStart(4, '0')}`
 const ok = (result) => {

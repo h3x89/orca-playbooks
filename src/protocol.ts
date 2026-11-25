@@ -1,7 +1,29 @@
 // The panel <-> worker contract, declared once: panel/index.html and src/worker.ts both follow it.
 export {}
 
-export type WorkspaceInfo = { id: string; name: string; path: string; branch: string | null }
+export type WorkspaceInfo = {
+  id: string
+  name: string
+  path: string
+  branch: string | null
+  projectId?: string
+  projectName?: string
+}
+
+export type CatalogEntry = {
+  workspace: WorkspaceInfo
+  playbooks: Pick<PlaybookInfo, 'file' | 'title' | 'description' | 'errors'>[]
+  error?: string
+}
+
+export type WaitingDecision = {
+  workspaceId: string
+  runId: string
+  title: string
+  stepId: string
+  stepTitle: string
+  ticket?: string
+}
 
 export type StepInfo = {
   id: string
@@ -19,6 +41,7 @@ export type StepInfo = {
 }
 
 export type PlaybookInfo = {
+  inputFields?: import('./playbook').InputField[]
   file: string
   id: string
   title: string
@@ -182,8 +205,11 @@ declare module 'orca' {
         orcaRuns: OrcaRunSummary[]
         sessions: SessionInfo[]
         waitingElsewhere: WaitingElsewhere[]
+        waitingDecisions: WaitingDecision[]
       }
     }
+    /** Saved playbooks from the local workspaces, read when the Catalog is opened. */
+    'catalog.list': { input: Record<string, never>; output: { entries: CatalogEntry[] } }
     /** The graph of one Orca Run: its tasks, deps, workers and live agent states. */
     'orca.run': { input: { runId: string }; output: { nodes: RunNode[] } }
     /** Everything one conversation started: its agents across its Runs and one timeline of all their work. */
@@ -197,7 +223,7 @@ declare module 'orca' {
     /** Opens a workspace, as clicking it in the sidebar does. */
     'workspace.goto': { input: { workspaceId: string }; output: { opened: boolean } }
     /** Starts a run of `<workspace>/.orca/playbooks/<file>`. */
-    'run.start': { input: { workspaceId: string; file: string }; output: { run: RunInfo } }
+    'run.start': { input: { workspaceId: string; file: string; inputs?: Record<string, string> }; output: { run: RunInfo } }
     /** Answers the open gate of `stepId`: `ok` continues, `revise` loops back (or stops the run) with the comment; `popraw` is a legacy alias of `revise`. */
     'gate.resolve': { input: { runId: string; stepId: string; choice: 'ok' | 'revise' | 'popraw'; comment?: string }; output: { run: RunInfo } }
   }
