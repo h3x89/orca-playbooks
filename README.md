@@ -30,10 +30,12 @@ user. See [what it can access](#trust).
    mkdir -p "$demo/.orca"
    cp -R examples/.orca/playbooks "$demo/.orca/"
    git -C "$demo" init -q -b main
-   orca repo add --path "$demo"
+   case "$(uname -s)" in
+     Linux) orca_cli=orca-ide ;;
+     *) orca_cli=orca ;;
+   esac
+   "$orca_cli" repo add --path "$demo"
    ```
-
-   On Linux, the desktop package names the CLI `orca-ide`.
 3. Open the **main** workspace under **checkout-demo** and open **Playbooks** in
    the right sidebar.
    Under **Workspace**, select **Pull request review** and choose **Start**.
@@ -53,13 +55,21 @@ user. See [what it can access](#trust).
 <details>
 <summary>Install from the CLI or choose a tagged release</summary>
 
-Run the first command to get the fingerprint for the exact source you intend
-to install. Read the grants Orca lists. If you approve them, pass the printed
-fingerprint to the second command.
+Get the fingerprint for the exact source you intend to install.
 
 ```sh
-orca plugin install . --json
-orca plugin install . --approve <fingerprint>
+case "$(uname -s)" in
+  Linux) orca_cli=orca-ide ;;
+  *) orca_cli=orca ;;
+esac
+"$orca_cli" plugin install . --json
+```
+
+Read the grants Orca lists. If you approve them, replace `FINGERPRINT_FROM_ORCA`
+with the printed fingerprint and run this in the same shell.
+
+```sh
+"$orca_cli" plugin install . --approve FINGERPRINT_FROM_ORCA
 ```
 
 For a tagged release, replace `.` in both commands with
