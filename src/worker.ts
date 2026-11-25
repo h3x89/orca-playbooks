@@ -242,16 +242,31 @@ export function redact(lines: string[]): string[] {
     .replace(/(Bearer|Basic)\s+[A-Za-z0-9._~+/=-]{12,}/g, '$1 <hidden>'))
 }
 
-let stopTimer: (() => void) | undefined
+let lifecycle: { stop(): void; settled(): Promise<void> } | undefined
 
 export function deactivate(): void {
-  stopTimer?.()
+  lifecycle?.stop()
+}
+
+/** Let in-process tests clean up their fixtures after detached calls finish. */
+export async function waitForBackground(): Promise<void> {
+  await lifecycle?.settled()
 }
 
 export default function activate(orca: OrcaWorkerApi): void {
   let runs: StoredRun[] = []
   let loaded: Promise<void> | undefined
   let ticking = false
+  let stopping = false
+  const background = new Set<Promise<void>>()
+  function track(work: Promise<void>): void {
+    background.add(work)
+    const remove = () => { background.delete(work) }
+    void work.then(remove, (error) => {
+      remove()
+      console.error(error)
+    })
+  }
   const scripts = new Set<string>()
   /** Gates the panel is answering right now; the tick leaves them alone. */
   const answering = new Set<string>()
@@ -522,7 +537,7 @@ export default function activate(orca: OrcaWorkerApi): void {
     refreshStatus(run)
     run.updatedAt = Date.now()
     await save()
-    void tick()
+    track(tick())
   }
 
   /** Applies a gate decision: `ok` completes the gate; `revise` loops back while loops remain, else stops the run. */
@@ -557,6 +572,7 @@ export default function activate(orca: OrcaWorkerApi): void {
     const tasks = Array.isArray(result.tasks) ? (result.tasks as { id: string; status: string }[]) : []
     let changed = false
     for (const step of run.playbook.steps) {
+      if (stopping) return false
       const state = run.tasks[step.id]
       const task = tasks.find((candidate) => candidate.id === state.taskId)
       if (task && task.status !== state.status && !scripts.has(state.taskId) && state.dispatchId !== 'failed') {
@@ -573,6 +589,7 @@ export default function activate(orca: OrcaWorkerApi): void {
       }
       if (step.kind === 'gate' && state.gateId && !state.decision && !answering.has(state.gateId)) {
         const gates = await orcaCli(['orchestration', 'gate-list', '--run', run.id, '--task', state.taskId, '--full'])
+        if (stopping) return false
         const gate = (Array.isArray(gates.gates) ? (gates.gates as Record<string, unknown>[]) : []).find((candidate) => candidate.id === state.gateId)
         const resolution = field(gate, 'resolution')
         if (state.decision || answering.has(state.gateId) || run.tasks[step.id] !== state) continue
@@ -600,7 +617,7 @@ export default function activate(orca: OrcaWorkerApi): void {
         changed = true
       } else if (step.kind === 'script') {
         if (scripts.has(state.taskId)) continue
-        void startScript(run, step, state)
+        track(startScript(run, step, state))
         changed = true
       } else if (!state.dispatchId) {
         const args = ['orchestration', 'worker-start', '--run', run.id, '--from', run.handle, '--task', state.taskId, '--agent', step.agent, '--worktree', selector(run.workspaceId)]
@@ -631,12 +648,13 @@ export default function activate(orca: OrcaWorkerApi): void {
   }
 
   async function tick(): Promise<void> {
-    if (ticking) return
+    if (stopping || ticking) return
     ticking = true
     try {
       await load()
       let changed = false
       for (const run of runs.filter((candidate) => candidate.status === 'running' || candidate.status === 'waiting')) {
+        if (stopping) break
         try {
           changed = (await tickRun(run)) || changed
         } catch (error) {
@@ -647,7 +665,7 @@ export default function activate(orca: OrcaWorkerApi): void {
           }
         }
       }
-      if (changed) await save()
+      if (changed && !stopping) await save()
     } finally {
       ticking = false
     }
@@ -665,6 +683,7 @@ export default function activate(orca: OrcaWorkerApi): void {
 
   /** Refreshes which workspaces each recent Orca Run worked in (`worker-list` per Run, only for new or still active Runs). */
   function refreshIndex(): Promise<void> {
+    if (stopping) return Promise.resolve()
     indexing ??= (async () => {
       // A retry after a failed first read is "indexing" again until it ends.
       firstReadFailed = false
@@ -708,7 +727,7 @@ export default function activate(orca: OrcaWorkerApi): void {
       const first = !indexedAt
       indexedAt = Date.now()
       // A panel that got an answer while this first read was running shows "reading"; tell it to ask again.
-      if (first) orca.panels.post('index.ready', {})
+      if (first && !stopping) orca.panels.post('index.ready', {})
     })().catch((error) => {
       if (!indexedAt) firstReadFailed = true
       throw error
@@ -732,10 +751,20 @@ export default function activate(orca: OrcaWorkerApi): void {
     return byTask
   }
 
-  const timer = setInterval(() => void tick(), pollMs())
+  const timer = setInterval(() => track(tick()), pollMs())
   ;(timer as { unref?: () => void }).unref?.()
-  stopTimer = () => clearInterval(timer)
-  void load().then(save).catch(() => undefined)
+  lifecycle = {
+    stop() {
+      stopping = true
+      clearInterval(timer)
+    },
+    async settled() {
+      while (background.size || indexing) {
+        await Promise.allSettled([...background, indexing])
+      }
+    }
+  }
+  track(load().then(save).catch(() => undefined))
   // The first read of Orca Runs takes seconds after a start; begin it now instead of on the first panel request.
   void refreshIndex().catch(() => undefined)
 
@@ -1117,7 +1146,7 @@ export default function activate(orca: OrcaWorkerApi): void {
     for (const step of topologicalOrder(playbook.steps)) run.tasks[step.id] = { taskId: await createTask(run, step, '', 1), status: 'pending', attempt: 1 }
     runs.unshift(run)
     await save()
-    void tick()
+    track(tick())
     return { run: publicRun(run) }
   })
 
@@ -1148,7 +1177,7 @@ export default function activate(orca: OrcaWorkerApi): void {
     }
     run.updatedAt = Date.now()
     await save()
-    void tick()
+    track(tick())
     return { run: publicRun(run) }
   })
 }

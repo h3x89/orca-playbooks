@@ -36,6 +36,7 @@ steps:
 let dir = ''
 afterEach(async () => {
   worker.deactivate()
+  await worker.waitForBackground()
   if (dir) rmSync(dir, { recursive: true, force: true, maxRetries: 10, retryDelay: 100 })
 })
 
@@ -172,6 +173,7 @@ steps:
   assert.equal(readFileSync(path.join(run.runDir, 'summary.txt'), 'utf8'), 'SECOND output')
 
   await mounted.deactivate()
+  await worker.waitForBackground()
   const reloaded = await mountWorker(worker, { host })
   const history = async () => (await reloaded.request('run.timeline', { runId: run.id })).history?.find((item) => item.id === firstTaskId)
   const recorded = await history()

@@ -84,7 +84,10 @@ fix. Version 0.5.4 looks for `orca` on Linux. The desktop package ships `orca-id
 - Orca **1.4.263 or newer**, with host API 1.10 (`agents.list` with `workspaceId`) and its desktop CLI.
   [Experimental native chat navigation](#open-an-agent-chat-experimental) has a separate version requirement.
 - A local workspace. The quick start was tested on Linux ARM64 in Docker with
-  Orca 1.4.274. See [Limitations](#limitations) for remote workspaces.
+  Orca 1.4.274, the version pinned in CI. See [Limitations](#limitations) for
+  remote workspaces.
+- The Orca CLI set by the app in `ORCA_CLI_COMMAND`. If unset, the plugin uses
+  `orca-ide` on Linux. On macOS, it tries the bundled binary, then `orca` on `PATH`.
 - For your own agent steps, configure the agents you name in Orca. Python scripts need `python3`.
 
 ## Two ways to coordinate work in Orca
@@ -432,13 +435,21 @@ When set, `ORCA_CLI_COMMAND` selects the CLI. Otherwise, Playbooks uses
 
 ## Development
 
-The plugin tests use `python3` and a `sqlite3` CLI with JSON output and `-safe` support.
-
 ```sh
-orca plugin validate .
-orca plugin test .         # parser, timeline, and full runs against a fake orca CLI (test/fake-orca.mjs)
+./scripts/check.sh         # also runs in GitHub Actions
 orca plugin types .        # writes the Orca typings to .orca/types/
 ```
+
+The checks use the installed Orca CLI (`orca-ide` on Linux), Node.js 22 or later,
+Python 3, Git, and a SQLite CLI with JSON output and `-safe` support. They
+validate the manifest and example playbooks, check BPMN parity, and exercise
+the parser, timeline, and full runs against a fake Orca CLI. The checks run without opening the desktop app.
+
+Run **CI** manually with **Run the desktop smoke test under Xvfb** to try the
+same plugin inside Orca on Ubuntu. The **Revise and publish** demo uses a fresh
+profile and only script steps. It checks that **Revise** reruns the draft,
+publication waits for **Approve**, and the final file matches the result in the
+panel. The run includes a screenshot and a summary of the checks.
 
 The repository is public, and so is every commit and pull request: read `AGENTS.md` before changing it.
 

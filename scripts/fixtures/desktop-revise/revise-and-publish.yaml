@@ -1,0 +1,24 @@
+title: Revise and publish
+
+steps:
+  - id: seed
+    title: Prepare source
+    script: { run: fixture.sh }
+
+  - id: draft
+    title: Write draft
+    needs: [seed]
+    script: { run: fixture.sh }
+
+  - id: review
+    title: Review the draft
+    needs: [draft]
+    gate:
+      question: Publish this draft?
+    on:
+      revise: { goto: draft, max_loops: 1 }
+
+  - id: publish
+    title: Publish approved draft
+    needs: [review]
+    script: { run: fixture.sh }
