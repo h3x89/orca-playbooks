@@ -280,8 +280,9 @@ Where the Graph tab has no graph, it says why and how to get one: describe the w
 to see its full name, state, and dependencies it is waiting for. Select a graph step, a Timeline row
 or an agent to preview its result. **Details** jumps to the step's actions. Depending on the step,
 these include **Open script**, **Open result file**, **View result**, **Last lines**, **Open terminal**
-and **Open decision**. A recorded attempt keeps its own result preview and last lines. Opening a
-file from the current attempt uses Orca's editor.
+and **Open decision**. Recorded agent attempts show their report and last lines. Each script attempt
+keeps its own output preview. If an older script attempt has no saved preview, the panel marks it as
+unavailable. Opening a file from the current attempt uses Orca's editor.
 
 A decision card appears above the tabs when a gate waits for you, and a banner when one waits in another
 workspace. Orca notifications and the status bar item say when a run waits for you, fails, is sent back

@@ -143,6 +143,49 @@ test('chat navigation is opt-in and refuses an untested Orca version', async () 
   if (process.platform === 'linux') assert.ok(calls().some((call) => call[0] === 'status'))
 })
 
+test('keeps each script attempt output and marks older missing output as unavailable', async () => {
+  const { workspace, host } = setup()
+  const dir = path.join(workspace, '.orca', 'playbooks')
+  writeFileSync(path.join(dir, 'script-revise.yaml'), `
+title: Script revision
+steps:
+  - id: summary
+    script: { run: summary.sh }
+  - id: decision
+    needs: [summary]
+    gate: { question: Approve? }
+    on:
+      revise: { goto: summary, max_loops: 1 }
+`)
+  writeFileSync(path.join(dir, 'scripts', 'summary.sh'), 'if test -f summary.txt; then echo "SECOND output"; else echo "FIRST output"; fi\n')
+  const mounted = await mountWorker(worker, { host })
+  const { workspaceId } = await mounted.request('state.get', {})
+  const { run } = await mounted.request('run.start', { workspaceId: workspaceId!, file: 'script-revise.yaml' })
+  const read = async () => (await mounted.request('state.get', {})).runs.find((item) => item.id === run.id)!
+  const first = await until(read, (item) => item.status === 'waiting')
+  assert.equal(first.tasks.summary.output, 'FIRST output')
+  const firstTaskId = first.tasks.summary.taskId
+
+  await mounted.request('gate.resolve', { runId: run.id, stepId: 'decision', choice: 'revise', comment: 'Try again' })
+  const next = await until(read, (item) => item.status === 'waiting' && item.tasks.summary.attempt === 2)
+  assert.equal(next.tasks.summary.output, 'SECOND output')
+  assert.equal(readFileSync(path.join(run.runDir, 'summary.txt'), 'utf8'), 'SECOND output')
+
+  await mounted.deactivate()
+  const reloaded = await mountWorker(worker, { host })
+  const history = async () => (await reloaded.request('run.timeline', { runId: run.id })).history?.find((item) => item.id === firstTaskId)
+  const recorded = await history()
+  assert.equal(recorded?.result, 'FIRST output')
+  assert.equal(recorded?.resultUnavailable, undefined)
+
+  // A pre-upgrade run keeps Orca task metadata but has no per-attempt file.
+  rmSync(path.join(run.runDir, `.script-output-${firstTaskId}.txt`))
+  const unavailable = await history()
+  assert.equal(unavailable?.result, undefined)
+  assert.equal(unavailable?.resultUnavailable, true)
+  await reloaded.deactivate()
+})
+
 test('runs scripts, the agent and the gate, loops on revise and finishes on an OK from the CLI', async () => {
   const { workspace, host } = setup()
   const weatherScript = path.join(workspace, '.orca', 'playbooks', 'scripts', 'weather.sh')

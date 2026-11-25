@@ -7,6 +7,8 @@
 - **Open chat** jumps to an existing native agent tab, including the exact Timeline attempt after
   **Revise**. The option is off by default and uses a temporary adapter for Orca 1.4.274 on Linux.
 - Graph titles wrap, and the Open chat action moves below the Timeline row in a narrow panel.
+- Timeline keeps each script attempt's output preview after **Revise** and marks missing previews
+  from older runs as unavailable.
 
 ## 0.5.4
 

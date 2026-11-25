@@ -973,7 +973,10 @@
         void render()
       }
 
+      const SCRIPT_OUTPUT_UNAVAILABLE = 'Output for this script attempt is unavailable.'
+
       function stepPreview(node) {
+        if (node.resultUnavailable) return SCRIPT_OUTPUT_UNAVAILABLE
         if (node.error) return node.error
         if (node.comment) return node.comment
         if (node.decision) return node.decision === 'ok' ? 'Decision: OK' : 'Decision: Revise'
@@ -1212,6 +1215,7 @@
         const html = `<div class="card drawer"><h3 tabindex="-1">${esc(node.title)}</h3><div class="muted small">${esc(node.sub)}</div>` +
           `<div id="drawerStatus" class="small" style="color:${node.color};margin-top:4px">${esc(stable)}</div>${waiting}${decision}` +
           (node.error ? `<div class="err small">${esc(node.error)}</div>` : '') +
+          (node.resultUnavailable ? `<div class="muted small">${SCRIPT_OUTPUT_UNAVAILABLE}</div>` : '') +
           (actions ? `<div class="row">${actions}</div>` : '') + chatNoticeMarkup(node, 'drawer') +
           (lines ? `<pre id="stepTranscript" tabindex="-1">${esc(lines.length ? lines.join('\n') : 'No lines in the transcript.')}</pre>` : '') +
           (node.result && node.kind !== 'gate' ? `<details${state.openOutputs.has(node.taskId ?? node.id) ? ' open' : ''} id="resultBox"><summary>${node.historical ? 'Recorded result' : 'Step result'}</summary><pre>${esc(node.result)}</pre></details>` : '') + '</div>'

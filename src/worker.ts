@@ -6,8 +6,8 @@
 // Pattern of calling `orca orchestration` from a plugin worker after Agent Pipeline (MIT, Alexander-64).
 import type { OrcaWorkerApi } from 'orca/worker'
 import { execFile } from 'node:child_process'
-import { existsSync } from 'node:fs'
-import { mkdir, readdir, readFile, realpath, stat, writeFile } from 'node:fs/promises'
+import { constants, existsSync } from 'node:fs'
+import { mkdir, open, readdir, readFile, realpath, stat, writeFile } from 'node:fs/promises'
 import path from 'node:path'
 import { buildRunGraph, launchOf, resultFields, workerActive, workspacePath, type CliTask, type CliWorker } from './orcaRuns'
 import { localFirstPrompts } from './firstPrompt'
@@ -76,6 +76,33 @@ export function sessionsOf(row: { agents?: Record<string, unknown>[] } | undefin
   })
 }
 const OUTPUT_CHARS = 4000
+
+function outputPreview(content: string): string {
+  return content.length > OUTPUT_CHARS ? `${content.slice(0, OUTPUT_CHARS)}\n…` : content
+}
+
+function scriptAttemptFile(runDir: string, taskId: string): string | undefined {
+  if (!/^task_[A-Za-z0-9]+$/.test(taskId)) return undefined
+  return path.join(runDir, `.script-output-${taskId}.txt`)
+}
+
+async function readScriptAttempt(runDir: string, taskId: string): Promise<string | undefined> {
+  const file = scriptAttemptFile(runDir, taskId)
+  if (!file) return undefined
+  try {
+    const handle = await open(file, constants.O_RDONLY | constants.O_NOFOLLOW | constants.O_NONBLOCK)
+    try {
+      const info = await handle.stat()
+      if (!info.isFile() || info.size > (OUTPUT_CHARS + 2) * 4) return undefined
+      return await handle.readFile('utf8')
+    } finally {
+      await handle.close()
+    }
+  } catch {
+    return undefined
+  }
+}
+
 const PLAYBOOK_DIR = path.join('.orca', 'playbooks')
 const RUNS_DIR = path.join('.orca', 'runs')
 const INDEX_RUNS = 60
@@ -437,7 +464,7 @@ export default function activate(orca: OrcaWorkerApi): void {
     for (const name of [`${stepId}.md`, `${stepId}.txt`]) {
       try {
         const content = await readFile(path.join(run.runDir, name), 'utf8')
-        return content.length > OUTPUT_CHARS ? `${content.slice(0, OUTPUT_CHARS)}\n…` : content
+        return outputPreview(content)
       } catch {
         // Try the next name.
       }
@@ -465,9 +492,17 @@ export default function activate(orca: OrcaWorkerApi): void {
       if (!(await stat(file)).isFile()) throw new Error(`No file ${file}.`)
       const env: Record<string, string> = { PLAYBOOK_RUN_DIR: run.runDir, PLAYBOOK_STEP: step.id }
       for (const [name, value] of Object.entries(run.inputs)) env[`PLAYBOOK_INPUT_${name.toUpperCase()}`] = value
+      const attemptFile = scriptAttemptFile(run.runDir, taskId)
+      if (!attemptFile) throw new Error('Invalid script task id.')
       const output = await runScript(file, run.runDir, env, step.timeoutSec)
+      const preview = outputPreview(output)
+      // If the plugin restarts before reporting completion, Orca can retry this task ID.
+      await writeFile(attemptFile, preview, {
+        flag: constants.O_WRONLY | constants.O_CREAT | constants.O_TRUNC | constants.O_NOFOLLOW | constants.O_NONBLOCK,
+        mode: 0o600
+      })
       await writeFile(path.join(run.runDir, `${step.id}.txt`), output)
-      result = { status: 'completed', output }
+      result = { status: 'completed', output: preview }
     } catch (error) {
       result = { status: 'failed', error: (error as Error).message }
     }
@@ -481,7 +516,7 @@ export default function activate(orca: OrcaWorkerApi): void {
     scripts.delete(taskId)
     if (run.tasks[step.id]?.taskId !== taskId) return
     Object.assign(state, { status: result.status, endedAt: completedAt, error: result.error })
-    if (result.output !== undefined) state.output = result.output.length > OUTPUT_CHARS ? `${result.output.slice(0, OUTPUT_CHARS)}\n…` : result.output
+    if (result.output !== undefined) state.output = result.output
     refreshStatus(run)
     run.updatedAt = Date.now()
     await save()
@@ -896,7 +931,11 @@ export default function activate(orca: OrcaWorkerApi): void {
       const kind = gateIds.has(node.id) || typeof decision === 'string' ? 'gate' : typeof report?.script === 'string' ? 'script' : 'agent'
       const dispatch = data.workers.find((worker) => worker.taskId === node.id)?.dispatchId ?? node.dispatchId
       const chatAvailable = !!chatRuntime && kind === 'agent' && !!await chatForDispatch(dispatch)
-      return { ...node, kind, ...(chatAvailable ? { chatAvailable } : {}), ...(decision === 'ok' || decision === 'revise' || decision === 'popraw' ? { decision } : {}),
+      const result = kind === 'script' ? await readScriptAttempt(own.runDir, node.id) : node.result
+      const scriptError = kind === 'script' && typeof report?.error === 'string' ? report.error : undefined
+      const resultUnavailable = kind === 'script' && result === undefined && scriptError === undefined
+      return { ...node, kind, result: scriptError ?? result, ...(resultUnavailable ? { resultUnavailable } : {}),
+        ...(chatAvailable ? { chatAvailable } : {}), ...(decision === 'ok' || decision === 'revise' || decision === 'popraw' ? { decision } : {}),
         ...(typeof report?.comment === 'string' ? { comment: report.comment } : {}) }
     }))
     return json({ ...timeline, history })

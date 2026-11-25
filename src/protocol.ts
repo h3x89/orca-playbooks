@@ -155,6 +155,7 @@ export type TimelineEvent = {
 export type TimelineStep = RunNode & {
   kind: 'agent' | 'script' | 'gate'
   chatAvailable?: boolean
+  resultUnavailable?: boolean
   decision?: StepRun['decision']
   comment?: string
 }
