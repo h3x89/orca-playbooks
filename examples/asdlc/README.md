@@ -31,9 +31,9 @@ in the workspace view.
    the plan. Choose **Revise** with a comment that addresses the review, for
    example `Name the exact test command and the deployment path.` A new
    author and reviewer run using the original research.
-3. Read the new plan and review. Choose **OK** once the review says `PASS`.
+3. Read the new plan and review. Choose **Approve** once the review says `PASS`.
    The plan check compares the verdict with the exact plan digest before the
-   fix starts. Choosing **OK** on a `BLOCK` verdict stops the run.
+   fix starts. Choosing **Approve** on a `BLOCK` verdict stops the run.
 4. Open **Graph** and select **Rerun the test and record the candidate**.
    The same test that reproduced the error now passes. The candidate review
    covers this test, the diff, the deployment location, and rollback.

@@ -1,115 +1,104 @@
 # Playbooks for Orca
 
-An [Orca](https://github.com/stablyai/orca) plugin for running agent workflows
-defined in YAML in your repository. Follow each run in a live graph, review
-the results, and decide when work can move forward.
+Run repeatable agent workflows in [Orca](https://github.com/stablyai/orca), with
+the steps and approval rules versioned alongside your code. Run independent
+checks in parallel, inspect their results, and keep the final decision with a person.
 
-A Markdown runbook explains how your team works. A playbook turns the steps,
-dependencies, and approvals into rules the plugin follows on each run.
-Review changes to those rules in Git, alongside the code they apply to.
+[Install and try it](#quick-start) · [How it works](#two-ways-to-coordinate-work-in-orca) · [YAML reference](#playbook-format) · [Permissions](#trust)
 
-[See it run](#human-in-the-loop-example) · [Two ways to coordinate](#two-ways-to-coordinate-work-in-orca) ·
-[Install and try it](#quick-start) · [YAML reference](#playbook-format)
+![Playbooks panel showing two completed pull request checks, a shared summary, and a review waiting for approval](docs/images/pull-request-review.png)
 
-## Human-in-the-loop example
+*Sample pull request review. The demo uses fixed results and runs without an agent account.*
 
-**Review-gated fix** takes a software change from investigation through local
-deployment. Two agents research the bug while a script reproduces it. The
-planner waits for all three results.
+## Quick start
 
-```mermaid
----
-config:
-  flowchart:
-    rankSpacing: 14
-    nodeSpacing: 20
-    padding: 5
----
-flowchart TB
-    Research("Research and reproduce") --> Plan("Write the plan")
-    Plan --> PlanReview("Independent plan review")
-    PlanReview --> Gate{"Approve?"}
-    Gate -. "Revise · up to two times" .-> Plan
-    Gate -->|"Revise · limit reached"| Sent([Sent back])
-    Gate -->|OK| Check("Check plan verdict")
-    Check -->|PASS| Fix("Fix and retest")
-    Fix -->|Test passes| Review("Independent fix review")
-    Review --> Deploy("Verify and probe local copy")
-    Deploy -->|Probe passes| Verified([Verified])
-    Check -->|Check fails| Failed([Failed])
-    Fix -->|Test fails| Failed
-    Deploy -->|Check fails| Failed
+Use Orca desktop **1.4.263 or newer**. Install Playbooks only if you trust the
+repository. Orca asks for approval because the plugin can run scripts as your
+user. See [what it can access](#trust).
 
-    classDef step fill:transparent,stroke:#8993A0,stroke-width:1px
-    classDef gate fill:transparent,stroke:#B57EDC,stroke-width:2px
-    classDef success fill:transparent,stroke:#3FB27F,stroke-width:2px
-    classDef error fill:transparent,stroke:#E5534B,stroke-width:2px
-    class Research,Plan,PlanReview,Check,Fix,Review,Deploy,Sent step
-    class Gate gate
-    class Verified success
-    class Failed error
-```
+1. Use a local checkout containing
+   [`pull-request-review.yaml`](examples/.orca/playbooks/pull-request-review.yaml).
+   In Orca, open **Settings → Plugins**. If plugins are off, turn them on first.
+   Choose **Add plugin → From a folder** and enter the path to the checkout
+   directory containing `orca-plugin.json`. After installing, review the
+   permissions on the plugin page before choosing **Enable plugin**.
+2. Create the demo workspace from the same checkout. Run these commands from
+   its root.
 
-The [BPMN model](examples/asdlc/process.bpmn) shows each step and the exits
-after approval, testing, and deployment. A failed script at any step stops
-the run.
+   ```sh
+   demo="$(mktemp -d)/checkout-demo"
+   mkdir -p "$demo/.orca"
+   cp -R examples/.orca/playbooks "$demo/.orca/"
+   git -C "$demo" init -q -b main
+   case "$(uname -s)" in
+     Linux) orca_cli=orca-ide ;;
+     *) orca_cli=orca ;;
+   esac
+   "$orca_cli" repo add --path "$demo"
+   ```
+3. Open the **main** workspace under **checkout-demo** and open **Playbooks** in
+   the right sidebar.
+   Under **Workspace**, select **Pull request review** and choose **Start**.
+4. The test and scope checks run in parallel. When **Approve review** appears,
+   read the summary and choose **Approve**. The run shows **finished**.
+   Open **Timeline** to see the checks overlap.
 
-### Define the workflow in YAML
-
-In the [executable playbook](examples/asdlc/.orca/playbooks/review-gated-fix.yaml),
-`needs` makes the decision wait for the independent plan review.
-**Revise** sends your comment back to the planning step, up to twice in this
-example. After **OK**, the next script checks the plan and verdict.
-
-```yaml
-  - id: decide
-    title: Decide after the plan review
-    needs: [review-plan]
-    gate:
-      question: Approve this plan, or send it back for revision?
-    on:
-      revise: {goto: plan, max_loops: 2}
-  - id: verify-plan
-    title: Check the plan verdict and digest
-    needs: [decide]
-    script: {run: check.py, timeout_sec: 30}
-```
-
-### Watch a revision and approval
-
-The first reviewer asked for the exact test command and deployment path.
-The operator chose **Revise**, and the plugin kept the research while fresh
-agents wrote and reviewed the new plan. The next decision card is shown
-here in a replay of the recorded run.
-
-![Orca decision card after Revise with the revised plan's PASS verdict and one revision left](docs/images/asdlc-revise.png)
-
-After **OK**, the example's script verified the plan verdict and digest. The
-original test passed after the fix, an independent reviewer approved the
-candidate, and the local copy returned **`2 minutes = 120 seconds`**.
+[Open the demo YAML](examples/.orca/playbooks/pull-request-review.yaml)
 
 <details>
-<summary>See the full run</summary>
+<summary>See the timeline after approval</summary>
 
-Both research agents and the reproduction script finished before the plan
-became ready.
-
-![Graph showing the research and reproduction steps complete, with the plan ready](docs/images/asdlc-research.png)
-
-The final script checked the candidate verdict and probed the deployed copy.
-
-![Timeline and step result showing that the deployed copy passed and returned 120 seconds](docs/images/asdlc-deployment.png)
+![Timeline showing the two pull request checks overlap before the summary and approval](docs/images/pull-request-timeline.png)
 
 </details>
 
-| Who | What they do in this example |
-| --- | --- |
-| **Agents** | Research, plan, fix, and review. Each step has its own prompt and report. Prompts can read earlier results from the run directory. |
-| **Scripts** | Reproduce the bug, rerun the original test, and verify that the verdict matches the plan or candidate. Failed checks block dependent work. |
-| **You** | Read the review and choose **OK** or **Revise**. The revision loop returns to the planning step and passes it your comment. |
+<details>
+<summary>Install from the CLI or choose a tagged release</summary>
 
-- [Run this example with Codex](examples/asdlc/README.md) in a standalone demo repository.
-- [Read the task briefing](examples/asdlc/task.md) used by the agents.
+Get the fingerprint for the exact source you intend to install.
+
+```sh
+case "$(uname -s)" in
+  Linux) orca_cli=orca-ide ;;
+  *) orca_cli=orca ;;
+esac
+"$orca_cli" plugin install . --json
+```
+
+Read the grants Orca lists. If you approve them, replace `FINGERPRINT_FROM_ORCA`
+with the printed fingerprint and run this in the same shell.
+
+```sh
+"$orca_cli" plugin install . --approve FINGERPRINT_FROM_ORCA
+```
+
+For a tagged release, replace `.` in both commands with
+`h3x89/orca-playbooks@vX.Y.Z`. In the app, choose **Add plugin → From a Git URL**
+and paste the GitHub tag link. Orca resolves the tag and asks you to confirm
+that you trust the publisher before installation. Clone the same tag for the
+demo with `git clone --branch vX.Y.Z https://github.com/h3x89/orca-playbooks.git`. For the Linux demo above, use a checkout containing the `orca-ide`
+fix. Version 0.5.4 looks for `orca` on Linux. The desktop package ships `orca-ide`.
+
+</details>
+
+## What you can run
+
+| Workflow | What Playbooks gives you |
+| --- | --- |
+| Review a change | Run independent checks together, collect the evidence, and pause for approval. |
+| Plan a fix | Ask one agent to draft and another to review. Use **Revise** to rerun the declared steps with your feedback. |
+| Follow a native Orca Run | Inspect its recorded tasks, agents, decisions and results from the same panel. |
+
+## Requirements
+
+- Orca **1.4.263 or newer**, with host API 1.10 (`agents.list` with `workspaceId`) and its desktop CLI.
+  [Experimental native chat navigation](#open-an-agent-chat-experimental) has a separate version requirement.
+- A local workspace. The quick start was tested on Linux ARM64 in Docker with
+  Orca 1.4.274, the version pinned in CI. See [Limitations](#limitations) for
+  remote workspaces.
+- The Orca CLI set by the app in `ORCA_CLI_COMMAND`. If unset, the plugin uses
+  `orca-ide` on Linux. On macOS, it tries the bundled binary, then `orca` on `PATH`.
+- For your own agent steps, configure the agents you name in Orca. Python scripts need `python3`.
 
 ## Two ways to coordinate work in Orca
 
@@ -159,103 +148,6 @@ Paseo uses a Playbook Manager agent by default and offers a managerless mode.
 The Orca plugin coordinates YAML runs through its worker. [Manager modes in
 Paseo](https://github.com/lerenn/paseo-playbooks#runs-with-no-playbook-manager)
 
-## Requirements
-
-- Orca **1.4.263 or newer** with host API 1.10 (`agents.list` with `workspaceId`). This build was tested
-  with the Ubuntu package pinned in CI. Experimental native chat navigation has a separate version
-  requirement.
-- The Orca CLI set by the app in `ORCA_CLI_COMMAND`. If unset, the plugin uses `orca-ide` on Linux
-  and tries the bundled macOS binary before falling back to `orca` elsewhere. On Linux, use
-  `orca-ide` in place of `orca` in the commands below.
-- `python3` for `.py` script steps, and the agents your playbooks name, set up in Orca.
-- Workspaces on this computer only (see Limitations).
-
-## Quick start
-
-Start with a script-only example to see the panel and a decision gate.
-The review-gated workflow above has its own [demo setup](examples/asdlc/README.md).
-
-1. Install the plugin from a folder:
-
-   ```sh
-   git clone https://github.com/h3x89/orca-playbooks.git
-   orca plugin install ./orca-playbooks --json   # lists what it asks for and prints a fingerprint
-   orca plugin install ./orca-playbooks --approve <fingerprint>
-   ```
-
-   or straight from Git (Orca takes the newest `vX.Y.Z` tag, else the default branch):
-
-   ```sh
-   orca plugin install h3x89/orca-playbooks --json
-   orca plugin install h3x89/orca-playbooks --approve <fingerprint>
-   ```
-
-2. If you installed straight from Git, clone the repository locally to get the examples.
-   From the cloned `orca-playbooks` directory, make a demo repository:
-
-   ```sh
-   demo=$(mktemp -d)
-   mkdir -p "$demo/.orca"
-   cp -R examples/.orca/playbooks "$demo/.orca/"
-   git -C "$demo" init
-   git -C "$demo" add .
-   orca repo add --path "$demo"
-   ```
-
-   You can also copy the example directory into an existing workspace. The panel reads
-   `.orca/playbooks/` in the selected workspace.
-3. Open the demo workspace, then the **Playbooks** panel in the right sidebar. Select **Workspace**.
-   Click **Refresh** if the panel was open while you copied the files.
-4. Pick **Sequential vs parallel** (script steps only, no agent) and press **Start**. Watch the Graph
-   and Timeline tabs, then answer the gate with **OK**.
-5. Try **Weather research** with Codex configured in Orca. Two agents write reports from fictional
-   forecast and air data in parallel. A script combines the reports, an agent drafts a plan for a walk,
-   and a separate agent reviews the saved draft. In **Graph**, select the review and open **Step result**. Try
-   **Revise** with a comment such as `Make the plan fit a 20-minute walk.` The two research results
-   are reused and two new agents draft and review the revised plan. With a passing review, choose
-   **OK** and read **Show the approved plan → Step result**. In **Agents**, select a step or choose
-   **Show agent** to inspect a session. The first pass uses four Codex sessions and each Revise
-   uses two more, up to two revisions.
-6. Try **Weather and air**: two scripts fetch the forecast and air quality from
-   [Open-Meteo](https://open-meteo.com) (no API key), a Claude agent writes a plan, and you approve it or
-   press **Revise** with a comment to have the plan written again.
-
-You can ask an agent already in the demo workspace to walk you through it:
-
-> Open `.orca/playbooks/weather-research.yaml`. Explain which steps run in parallel and how
-> to start Weather research in the Orca Playbooks panel. Show me where to read the review,
-> how to send the plan back once with Revise, and how to find the approved plan.
-
-## Trust
-
-Install this plugin only if you trust its code, and start only playbooks from repositories you trust.
-
-- The plugin runs as a `trusted-worker`: a Node process with the rights of your user account. It runs
-  the `orca` CLI and the scripts of a playbook (`<repo>/.orca/playbooks/scripts/`).
-- Script steps get only `PATH`, `HOME`, `USER`, `LANG`, `LC_ALL`, `TMPDIR` and `PLAYBOOK_*` variables.
-  This is not a sandbox: a script can do anything your account can.
-- An agent step starts an Orca worker on your account with a prompt from the repository. What the agent
-  may do depends on that agent's permission settings in Orca; in a permission-bypass mode, a prompt
-  alone can run commands. Every agent step uses your subscription or API quota, and Revise runs steps
-  again (at most `max_loops` times, up to 5).
-- The panel lists every local workspace, including cloned repositories of other people: a playbook from
-  someone else's repository looks the same as your own.
-- **Last lines** of worker transcripts are shown with a simple mask for strings that look like tokens.
-  Take care when sharing screenshots.
-- The opt-in chat adapter reads the local Orca runtime credential to select a tab through Orca's
-  private local Unix socket. The credential stays in the worker. See [Open an agent chat](#open-an-agent-chat-experimental).
-- The plugin has no hooks. It writes run files to `<repo>/.orca/runs/` and saves run state in its own plugin storage.
-
-Capabilities it asks for: `storage:own` (the runs it started), `settings:own` (optional journal and experimental chat settings),
-`workspace:read` (the workspace in focus
-and the list of workspaces), `workspace:write` (open workspaces and files, focus terminals),
-`agent:read` (live agent states), `terminal:send`, `notifications:show`. Orca describes `terminal:send`
-broadly (open and close terminals, type and run commands in your terminals, local and over SSH); the
-plugin uses it only to open the coordinator terminal of each run it starts.
-
-`ORCA_CLI_COMMAND`, when set in Orca's environment, replaces the `orca` binary the plugin calls; it is
-meant for development and the tests.
-
 ## The panel
 
 The panel opens on **Workspace**. **Needs you** groups open decisions by repository, and its count
@@ -286,7 +178,7 @@ and **Open decision**. Recorded agent attempts show their report and last lines.
 keeps its own output preview. If an older script attempt has no saved preview, the panel marks it as
 unavailable. Opening a file from the current attempt uses Orca's editor.
 
-A decision card appears above the tabs when a gate waits for you, and a banner when one waits in another
+A decision card appears below the workspace name when a gate waits for you, and a banner when one waits in another
 workspace. Orca notifications and the status bar item say when a run waits for you, fails, is sent back
 or finishes.
 
@@ -332,6 +224,117 @@ gate nobody dispatched belongs to the conversation when it is the only one dispa
 A conversation's state reads "waiting for you · last reply HH:MM", "waiting for its helpers" or
 "working". The panel also shows the work Orca observes inside a session right now (background commands,
 native subagents); Orca keeps no history of it.
+
+## More examples
+
+- [Sequential vs parallel](examples/.orca/playbooks/sequential-vs-parallel.yaml)
+  uses scripts to make dependency timing visible.
+- [Weather research](examples/.orca/playbooks/weather-research.yaml) starts two
+  Codex workers in parallel on fictional forecast and air data, drafts a plan,
+  and reviews it. The first pass uses four Codex sessions. **Revise** uses two
+  more sessions each time, up to two revisions.
+- [Weather and air](examples/.orca/playbooks/weather-air.yaml) fetches data from
+  Open-Meteo and asks a Claude agent to write a plan for human review.
+
+## Human-in-the-loop example
+
+**Review-gated fix** takes a software change from investigation through local
+deployment. Two agents research the bug while a script reproduces it. The
+planner waits for all three results.
+
+```mermaid
+---
+config:
+  flowchart:
+    rankSpacing: 14
+    nodeSpacing: 20
+    padding: 5
+---
+flowchart TB
+    Research("Research and reproduce") --> Plan("Write the plan")
+    Plan --> PlanReview("Independent plan review")
+    PlanReview --> Gate{"Approve?"}
+    Gate -. "Revise · up to two times" .-> Plan
+    Gate -->|"Revise · limit reached"| Sent([Sent back])
+    Gate -->|Approve| Check("Check plan verdict")
+    Check -->|PASS| Fix("Fix and retest")
+    Fix -->|Test passes| Review("Independent fix review")
+    Review --> Deploy("Verify and probe local copy")
+    Deploy -->|Probe passes| Verified([Verified])
+    Check -->|Check fails| Failed([Failed])
+    Fix -->|Test fails| Failed
+    Deploy -->|Check fails| Failed
+
+    classDef step fill:transparent,stroke:#8993A0,stroke-width:1px
+    classDef gate fill:transparent,stroke:#B57EDC,stroke-width:2px
+    classDef success fill:transparent,stroke:#3FB27F,stroke-width:2px
+    classDef error fill:transparent,stroke:#E5534B,stroke-width:2px
+    class Research,Plan,PlanReview,Check,Fix,Review,Deploy,Sent step
+    class Gate gate
+    class Verified success
+    class Failed error
+```
+
+The [BPMN model](examples/asdlc/process.bpmn) shows each step and the exits
+after approval, testing, and deployment. A failed script at any step stops
+the run.
+
+### Define the workflow in YAML
+
+In the [executable playbook](examples/asdlc/.orca/playbooks/review-gated-fix.yaml),
+`needs` makes the decision wait for the independent plan review.
+**Revise** sends your comment back to the planning step, up to twice in this
+example. After **Approve**, the next script checks the plan and verdict.
+
+```yaml
+  - id: decide
+    title: Decide after the plan review
+    needs: [review-plan]
+    gate:
+      question: Approve this plan, or send it back for revision?
+    on:
+      revise: {goto: plan, max_loops: 2}
+  - id: verify-plan
+    title: Check the plan verdict and digest
+    needs: [decide]
+    script: {run: check.py, timeout_sec: 30}
+```
+
+### Watch a revision and approval
+
+The first reviewer asked for the exact test command and deployment path.
+The operator chose **Revise**, and the plugin kept the research while fresh
+agents wrote and reviewed the new plan. The next decision card is shown
+here in a replay recorded with an earlier version of the panel.
+
+![Orca decision card after Revise with the revised plan's PASS verdict and one revision left](docs/images/asdlc-revise.png)
+
+After **Approve**, the example's script verified the plan verdict and digest. The
+original test passed after the fix, an independent reviewer approved the
+candidate, and the local copy returned **`2 minutes = 120 seconds`**.
+
+<details>
+<summary>See the full run</summary>
+
+Both research agents and the reproduction script finished before the plan
+became ready.
+
+![Graph showing the research and reproduction steps complete, with the plan ready](docs/images/asdlc-research.png)
+
+The final script checked the candidate verdict and probed the deployed copy.
+
+![Timeline and step result showing that the deployed copy passed and returned 120 seconds](docs/images/asdlc-deployment.png)
+
+</details>
+
+| Who | What they do in this example |
+| --- | --- |
+| **Agents** | Research, plan, fix, and review. Each step has its own prompt and report. Prompts can read earlier results from the run directory. |
+| **Scripts** | Reproduce the bug, rerun the original test, and verify that the verdict matches the plan or candidate. Failed checks block dependent work. |
+| **You** | Read the review and choose **Approve** or **Revise**. The revision loop returns to the planning step and passes it your comment. |
+
+- [Run this example with Codex](examples/asdlc/README.md) in a standalone demo repository.
+- [Read the task briefing](examples/asdlc/task.md) used by the agents.
 
 ## Playbook format
 
@@ -395,6 +398,36 @@ answer gates from the panel: `orca orchestration gate-resolve` from another term
 way, the plugin still reads the decision; it accepts only `ok` or `revise: <comment>` and asks again on
 any other answer.
 
+## Trust
+
+Install this plugin only if you trust its code, and start only playbooks from repositories you trust.
+
+- The plugin runs as a `trusted-worker`: a Node process with the rights of your user account. It runs
+  the `orca` CLI and the scripts of a playbook (`<repo>/.orca/playbooks/scripts/`).
+- Script steps get only `PATH`, `HOME`, `USER`, `LANG`, `LC_ALL`, `TMPDIR` and `PLAYBOOK_*` variables.
+  This is not a sandbox: a script can do anything your account can.
+- An agent step starts an Orca worker on your account with a prompt from the repository. What the agent
+  may do depends on that agent's permission settings in Orca; in a permission-bypass mode, a prompt
+  alone can run commands. Every agent step uses your subscription or API quota, and Revise runs steps
+  again (at most `max_loops` times, up to 5).
+- The panel lists every local workspace, including cloned repositories of other people: a playbook from
+  someone else's repository looks the same as your own.
+- **Last lines** of worker transcripts are shown with a simple mask for strings that look like tokens.
+  Take care when sharing screenshots.
+- The opt-in chat adapter reads the local Orca runtime credential to select a tab through Orca's
+  private local Unix socket. The credential stays in the worker. See [Open an agent chat](#open-an-agent-chat-experimental).
+- The plugin has no hooks. It writes run files to `<repo>/.orca/runs/` and saves run state in its own plugin storage.
+
+Capabilities it asks for: `storage:own` (the runs it started), `settings:own` (optional journal and experimental chat settings),
+`workspace:read` (the workspace in focus
+and the list of workspaces), `workspace:write` (open workspaces and files, focus terminals),
+`agent:read` (live agent states), `terminal:send`, `notifications:show`. Orca describes `terminal:send`
+broadly (open and close terminals, type and run commands in your terminals, local and over SSH); the
+plugin uses it only to open the coordinator terminal of each run it starts.
+
+When set, `ORCA_CLI_COMMAND` selects the CLI. Otherwise, Playbooks uses
+`orca-ide` on Linux and the bundled `orca` on macOS when available.
+
 ## Limitations
 
 - Workspaces on this computer only: workspaces on SSH hosts and paired Orca servers are not listed.
@@ -418,14 +451,14 @@ orca plugin types .        # writes the Orca typings to .orca/types/
 ```
 
 The checks use the installed Orca CLI (`orca-ide` on Linux), Node.js 22 or later,
-Python 3, Git, and the SQLite CLI. They validate the manifest and example
-playbooks, check BPMN parity, and exercise the parser, timeline, and full runs
-against a fake Orca CLI. The checks run without opening the desktop app.
+Python 3, Git, and a SQLite CLI with JSON output and `-safe` support. They
+validate the manifest and example playbooks, check BPMN parity, and exercise
+the parser, timeline, and full runs against a fake Orca CLI. The checks run without opening the desktop app.
 
 Run **CI** manually with **Run the desktop smoke test under Xvfb** to try the
 same plugin inside Orca on Ubuntu. The **Revise and publish** demo uses a fresh
 profile and only script steps. It checks that **Revise** reruns the draft,
-publication waits for **OK**, and the final file matches the result in the
+publication waits for **Approve**, and the final file matches the result in the
 panel. The run includes a screenshot and a summary of the checks.
 
 The repository is public, and so is every commit and pull request: read `AGENTS.md` before changing it.

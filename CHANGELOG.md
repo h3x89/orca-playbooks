@@ -1,5 +1,13 @@
 # Changelog
 
+## 0.5.6
+
+- Show a waiting review and its **Approve** action directly below the workspace
+  name. Make the sidebar controls and workflow status easier to read.
+- Add a plugin icon, cover, and timeline screenshot. Lead the README with a
+  pull request review demo that runs two checks before asking for a decision.
+- Use the desktop package's `orca-ide` CLI on Linux.
+
 ## 0.5.5
 
 - Select a step in Graph, Timeline or Agents for a preview and a link to its details. Open its script,

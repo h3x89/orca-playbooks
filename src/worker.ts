@@ -123,17 +123,18 @@ function orcaExecutable(): string {
 type CliResult = Record<string, unknown>
 
 function orcaCli(args: string[], timeoutMs = 120_000, maxBuffer = 4 * 1024 * 1024): Promise<CliResult> {
+  const executable = orcaExecutable()
   return new Promise((resolve, reject) => {
-    execFile(orcaExecutable(), [...args, '--json'], { timeout: timeoutMs, maxBuffer, windowsHide: true }, (error, stdout, stderr) => {
+    execFile(executable, [...args, '--json'], { timeout: timeoutMs, maxBuffer, windowsHide: true }, (error, stdout, stderr) => {
       let parsed: { ok?: boolean; result?: CliResult; error?: { code?: string; message?: string } } | undefined
       try {
         parsed = JSON.parse(stdout || stderr)
       } catch {
-        reject(new Error(`orca ${args.slice(0, 2).join(' ')}: ${(stderr || stdout || String(error)).slice(0, 300)}`))
+        reject(new Error(`${executable} ${args.slice(0, 2).join(' ')}: ${(stderr || stdout || String(error)).slice(0, 300)}`))
         return
       }
       if (!parsed || parsed.ok === false) {
-        reject(new Error(`orca ${args.slice(0, 2).join(' ')}: ${parsed?.error?.message ?? 'error'}`))
+        reject(new Error(`${executable} ${args.slice(0, 2).join(' ')}: ${parsed?.error?.message ?? 'error'}`))
         return
       }
       resolve(parsed.result ?? {})

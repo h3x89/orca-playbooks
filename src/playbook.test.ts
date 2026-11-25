@@ -117,8 +117,10 @@ test('a revise loop reruns goto, the steps between it and the gate, the gate and
 test('the example playbooks are valid', () => {
   const dir = fileURLToPath(new URL('../examples/.orca/playbooks/', import.meta.url))
   const files = readdirSync(dir).filter((name) => name.endsWith('.yaml')).sort()
-  assert.deepEqual(files, ['sequential-vs-parallel.yaml', 'weather-air.yaml', 'weather-research.yaml'])
+  assert.deepEqual(files, ['pull-request-review.yaml', 'sequential-vs-parallel.yaml', 'weather-air.yaml', 'weather-research.yaml'])
   for (const file of files) assert.deepEqual(parsePlaybook(file.replace('.yaml', ''), readFileSync(dir + file, 'utf8')).errors, [], file)
+  const review = parsePlaybook('pull-request-review', readFileSync(dir + 'pull-request-review.yaml', 'utf8')).playbook!
+  assert.deepEqual(depths(review.steps), { tests: 0, scope: 0, summary: 1, approve: 2 })
   const parallel = parsePlaybook('sequential-vs-parallel', readFileSync(dir + 'sequential-vs-parallel.yaml', 'utf8')).playbook!
   assert.deepEqual(depths(parallel.steps), { left: 0, right: 0, first: 1, second: 2, done: 3 })
   const research = parsePlaybook('weather-research', readFileSync(dir + 'weather-research.yaml', 'utf8')).playbook!
