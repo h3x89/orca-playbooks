@@ -197,6 +197,11 @@ The adapter is a temporary workaround using Orca's private local interface and m
 when Orca changes it. Playbooks will move to a supported action when Orca provides one.
 [Follow the native chat focus request (#42069)](https://github.com/stablyai/orca/issues/42069).
 
+For conversation Timeline navigation on official Orca builds, including restoring a closed worker
+chat when its parent tab is also closed, see [the Playbooks tracking
+issue](https://github.com/h3x89/orca-playbooks/issues/10). Playbooks is waiting for a supported
+Orca host API for this case.
+
 ### First prompt and parallel work
 
 In **Settings → Plugins → Playbooks**, set **Local Orca journal path** to the absolute path
