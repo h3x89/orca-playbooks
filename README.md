@@ -461,9 +461,14 @@ Python 3, Git, and a SQLite CLI with JSON output and `-safe` support. They
 validate the manifest and example playbooks, check BPMN parity, and exercise
 the parser, timeline, and full runs against a fake Orca CLI. The checks run without opening the desktop app.
 
-Run **CI** manually with **Run the desktop smoke test under Xvfb** for Ubuntu
-(Orca 1.4.274) or **Run the desktop smoke test on macOS ARM64** (Orca 1.4.278).
-Both jobs load the plugin from the selected branch into a fresh Orca profile.
+The macOS ARM64 desktop smoke runs automatically on pull requests that change
+the plugin source, panel, bundled dependencies, manifest, or smoke test and CI
+files. It uses Orca 1.4.278 and loads the pull request into a fresh profile.
+
+To run either desktop smoke on demand, open the **CI** workflow and select
+**Run the desktop smoke test under Xvfb** for Ubuntu (Orca 1.4.274) or
+**Run the desktop smoke test on macOS ARM64**. Both options test the selected
+branch in a fresh Orca profile.
 The **Revise and publish** demo checks the plan preview without starting a new
 run, opens the pending decision from a second workspace, and confirms that
 **Approve** clears **Needs you**. It also checks that **Revise** reruns the draft
