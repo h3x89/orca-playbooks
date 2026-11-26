@@ -5,6 +5,7 @@ cd -- "$(dirname -- "${BASH_SOURCE[0]}")/.."
 plugin=$PWD
 screenshot=${1:?Usage: ./scripts/smoke-desktop.sh /path/to/panel.png}
 profile=$(mktemp -d)
+profile=$(cd -- "$profile" && pwd -P)
 home="$profile/home"
 demo="$profile/demo"
 app_pid=
@@ -73,7 +74,14 @@ case "$(uname -s)" in
 esac
 timeout_cmd=$(command -v timeout || command -v gtimeout)
 orca() {
-  "$timeout_cmd" 25s "${isolated[@]}" "$cli" "$@" --json
+  local output status=0
+  output=$("$timeout_cmd" 25s "${isolated[@]}" "$cli" "$@" --json) || status=$?
+  if ((status != 0 && status != 3)) && [[ $1 != status ]]; then
+    printf 'Orca %s %s failed (exit %s):\n' "$1" "${2:-}" "$status" >&2
+    printf '%s\n' "$output" | jq -c '.error | {code, message}' >&2 || true
+  fi
+  printf '%s\n' "$output"
+  return "$status"
 }
 
 "${isolated[@]}" git -C "$demo" init -q -b main
