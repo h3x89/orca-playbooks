@@ -1,5 +1,5 @@
 import { execFile } from 'node:child_process'
-import { writeFile } from 'node:fs/promises'
+import { readFile, writeFile } from 'node:fs/promises'
 import path from 'node:path'
 import { promisify } from 'node:util'
 import { expect } from '@stablyai/playwright-test'
@@ -51,10 +51,48 @@ test('opens a closed orchestration worker from session history', async ({
     })
   }, shellWord(wrapper))
 
+  function runLine(args: string[], output: string) {
+    return 'run: ' + args.map(shellWord).join(' ') + ' >' + shellWord(output) + ' 2>' + shellWord(output + '.stderr')
+  }
+  async function receipt(file: string) {
+    await expect.poll(async () => (await readFile(file, 'utf8').catch(() => '')).trim(), {
+      timeout: 45_000,
+    }).not.toBe('').catch(async (error) => {
+      const detail = await readFile(file + '.stderr', 'utf8').catch(() => '')
+      throw new Error('No fixture receipt: ' + path.basename(file) + (detail ? '\n' + detail : ''), { cause: error })
+    })
+    const response = JSON.parse(await readFile(file, 'utf8'))
+    expect(response.ok, JSON.stringify(response.error)).toBe(true)
+    return response.result
+  }
+
   const workspace = 'path:' + seededRepoPath
+  const reportScript = path.join(fixtureRoot, 'tests/e2e/golden-journeys/playbooks-fixture-report.cjs')
+  const cases = [
+    { name: 'Playbooks fixture manual worker', autoRelease: false, suffix: 'manual' },
+    { name: 'Playbooks fixture automatic worker', autoRelease: true, suffix: 'automatic' },
+  ].map((scenario) => ({
+    ...scenario,
+    startLog: path.join(profile.home, 'worker-start-' + scenario.suffix + '.json'),
+    doneLog: path.join(profile.home, 'worker-done-' + scenario.suffix + '.json'),
+  }))
+  const launchLines = await Promise.all(cases.map(async ({ name, suffix, autoRelease, startLog, doneLog }) => {
+    const marker = 'Fixture marker ' + name
+    const report = runLine(
+      [process.execPath, reportScript, cliEntry, launchLog.replace(/\.jsonl$/, '-inputs.jsonl'), marker],
+      doneLog,
+    )
+    const spec = path.join(profile.home, 'worker-spec-' + suffix + '.txt')
+    await writeFile(spec, marker + '\n' + report + '\n')
+    return runLine([
+      process.execPath, cliEntry, 'orchestration', 'worker-start', '--agent', 'claude',
+      '--worktree', workspace, '--task-title', name, '--spec-file', spec,
+      ...(autoRelease ? [] : ['--keep-open']), '--json',
+    ], startLog)
+  }))
   const parent = await cli(
     'agent', 'launch', '--agent', 'claude', '--surface', 'chat', '--worktree', workspace,
-    '--prompt', 'Playbooks fixture parent', '--focus',
+    '--prompt', ['Playbooks fixture parent', ...launchLines].join('\n'), '--focus',
   )
   expect(parent.outcome.kind).toBe('structured')
   const parentId = parent.outcome.sessionId
@@ -96,12 +134,8 @@ test('opens a closed orchestration worker from session history', async ({
     await orcaPage.screenshot({ path: testInfo.outputPath(evidenceName + '.png') })
   }
 
-  async function exerciseWorker(name: string, autoRelease: boolean) {
-    const worker = await cli(
-      'orchestration', 'worker-start', '--agent', 'claude', '--worktree', workspace,
-      '--from', parentHandle, '--task-title', name, '--spec', 'Fixture marker ' + name,
-      ...(autoRelease ? [] : ['--keep-open']),
-    )
+  async function exerciseWorker({ name, autoRelease, startLog, doneLog }: typeof cases[number]) {
+    const worker = await receipt(startLog)
     expect(worker.mode).toBe('structured')
     const dispatch = (await cli('orchestration', 'dispatch-show', '--task', worker.taskId)).dispatch
     const rawSession = dispatch.assigneeOrcaSessionId ?? dispatch.assignee_orca_session_id
@@ -111,11 +145,7 @@ test('opens a closed orchestration worker from session history', async ({
     await cli('chat', 'rename', '--session', sessionId.split(':')[1], '--name', name)
     const transcript = await cli('agent', 'read', sessionId)
     expect(JSON.stringify(transcript)).toContain('Fixture marker ' + name)
-    await cli(
-      'orchestration', 'send', '--from', worker.terminal, '--type', 'worker_done',
-      '--subject', 'Fixture completed', '--body', 'Synthetic fixture completed.',
-      '--task-id', worker.taskId, '--dispatch-id', worker.dispatchId, '--outcome', 'succeeded',
-    )
+    await receipt(doneLog)
 
     if (!autoRelease) {
       await openFromHistory(name, sessionId, 'already-open')
@@ -133,6 +163,5 @@ test('opens a closed orchestration worker from session history', async ({
     expect(JSON.stringify(restored)).toContain('Fixture marker ' + name)
   }
 
-  await exerciseWorker('Playbooks fixture manual worker', false)
-  await exerciseWorker('Playbooks fixture automatic worker', true)
+  for (const scenario of cases) await exerciseWorker(scenario)
 })

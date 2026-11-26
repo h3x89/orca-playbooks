@@ -3,6 +3,7 @@ name: macOS desktop probe
 on:
   push:
     branches: [h3x89/macos-desktop-probe]
+    paths: [scripts/smoke-desktop.sh]
 
 permissions:
   contents: read
