@@ -366,10 +366,11 @@ test('follows the focused workspace and shows the other Orca Runs that worked th
   assert.equal(finished.live, undefined, 'a finished task never takes a live agent')
 
   // A Run whose first worker starts after the index was read still shows up (Orca never moves updated_at).
-  const seeded = JSON.parse(readFileSync(process.env.FAKE_ORCA_STATE!, 'utf8'))
-  seeded.workers.push({ dispatchId: 'ctx_e3', taskId: 'task_e2', runId: 'run_ext2', state: 'ready', liveness: 'live', agent: 'claude/claude-opus-5-5', workspace: 'repo1::' + workspace })
-  writeFileSync(process.env.FAKE_ORCA_STATE!, JSON.stringify(seeded))
-  await new Promise((resolve) => setTimeout(resolve, 50))
+  // Use the fake CLI's state lock so this update cannot race the worker's index reads.
+  execFileSync(process.env.ORCA_CLI_COMMAND!, ['fixture', 'add-worker', JSON.stringify({
+    dispatchId: 'ctx_e3', taskId: 'task_e2', runId: 'run_ext2', state: 'ready', liveness: 'live',
+    agent: 'claude/claude-opus-5-5', workspace: 'repo1::' + workspace
+  }), '--json'])
   world.focus = { workspaceId: 'repo1::' + workspace, branch: 'main', displayName: 'demo', terminals: [] }
   let later = await mounted.request('state.get', {})
   for (let i = 0; i < 100 && !later.orcaRuns.some((run) => run.id === 'run_ext2'); i += 1) {

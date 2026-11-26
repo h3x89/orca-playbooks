@@ -3,10 +3,12 @@ set -euo pipefail
 
 cd -- "$(dirname -- "${BASH_SOURCE[0]}")/.."
 plugin=$PWD
-screenshot=${1:?Usage: xvfb-run -a ./scripts/smoke-desktop.sh /path/to/panel.png}
+screenshot=${1:?Usage: ./scripts/smoke-desktop.sh /path/to/panel.png}
 profile=$(mktemp -d)
+profile=$(cd -- "$profile" && pwd -P)
 home="$profile/home"
 demo="$profile/demo"
+other="$profile/decision-demo"
 app_pid=
 
 cleanup() {
@@ -16,6 +18,11 @@ cleanup() {
   fi
   if [[ -n "$app_pid" ]]; then
     kill -- "-$app_pid" 2>/dev/null || true
+    for _attempt in {1..20}; do
+      if ! kill -0 "$app_pid" 2>/dev/null; then break; fi
+      sleep 0.1
+    done
+    kill -KILL -- "-$app_pid" 2>/dev/null || true
     wait "$app_pid" 2>/dev/null || true
   fi
   # Electron helpers can still flush profile state as the main process exits.
@@ -27,40 +34,94 @@ cleanup() {
   return "$((status == 0 ? 1 : status))"
 }
 trap cleanup EXIT
+trap 'exit 124' TERM
 
-mkdir -p "$home/.config" "$home/.cache" "$demo/.orca"
+mkdir -p "$home/.config" "$home/.cache" "$demo/.orca" "$other"
 cp -R scripts/fixtures/desktop-revise "$demo/.orca/playbooks"
-isolated=(env -i "PATH=$PATH" "HOME=$home" "DISPLAY=${DISPLAY:?Run under Xvfb}"
-  "XAUTHORITY=${XAUTHORITY:?Run under xvfb-run}" CI=1 ORCA_BACKGROUND_LAUNCH=1)
+isolated=(env -i "PATH=$PATH" "HOME=$home" CI=1 ORCA_BACKGROUND_LAUNCH=1)
+app_args=(--remote-debugging-port=0)
+case "$(uname -s)" in
+  Darwin)
+    if [[ ${GITHUB_ACTIONS:-} != true || ${RUNNER_OS:-} != macOS ]]; then
+      printf 'The packaged macOS probe requires a disposable GitHub-hosted runner\n' >&2
+      exit 1
+    fi
+    bundle=${ORCA_SMOKE_MAC_APP:?Set ORCA_SMOKE_MAC_APP to the extracted app bundle}
+    app="$bundle/Contents/MacOS/Orca"
+    cli="$bundle/Contents/Resources/bin/orca"
+    user_data="$HOME/Library/Application Support/orca"
+    if [[ -e "$user_data" ]]; then
+      printf 'The runner already has an Orca profile\n' >&2
+      exit 1
+    fi
+    isolated=(env -i "PATH=$bundle/Contents/Resources/bin:$PATH" "HOME=$HOME" CI=1
+      ORCA_BACKGROUND_LAUNCH=1 "ORCA_USER_DATA_PATH=$user_data")
+    port=$(python3 -c 'import socket; s=socket.socket(); s.bind(("127.0.0.1", 0)); print(s.getsockname()[1])')
+    app_args=("--remote-debugging-port=$port")
+    ;;
+  Linux)
+    app=/opt/Orca/orca-ide
+    cli=orca-ide
+    user_data="$home/.config/orca"
+    isolated+=("DISPLAY=${DISPLAY:?Run under Xvfb}" "XAUTHORITY=${XAUTHORITY:?Run under xvfb-run}")
+    app_args+=(--password-store=basic --disable-dev-shm-usage)
+    # A disposable Docker container can prohibit the Chromium setuid sandbox.
+    if [[ ${ORCA_SMOKE_NO_SANDBOX:-0} == 1 ]]; then
+      app_args+=(--no-sandbox)
+    fi
+    ;;
+  *)
+    printf 'Unsupported desktop platform\n' >&2
+    exit 1
+    ;;
+esac
+timeout_cmd=$(command -v timeout || command -v gtimeout)
 orca() {
-  timeout 25s "${isolated[@]}" orca-ide "$@" --json
+  local output status=0
+  output=$("$timeout_cmd" 25s "${isolated[@]}" "$cli" "$@" --json) || status=$?
+  if ((status != 0 && status != 3)) && [[ $1 != status ]]; then
+    printf 'Orca %s %s failed (exit %s):\n' "$1" "${2:-}" "$status" >&2
+    printf '%s\n' "$output" | jq -c '.error | {code, message}' >&2 || true
+  fi
+  printf '%s\n' "$output"
+  return "$status"
 }
 
-"${isolated[@]}" git -C "$demo" init -q -b main
-"${isolated[@]}" git -C "$demo" -c user.name='Smoke Test' -c user.email='smoke@example.invalid' \
-  commit --allow-empty -qm 'Start demo'
+for workspace in "$demo" "$other"; do
+  "${isolated[@]}" git -C "$workspace" init -q -b main
+  "${isolated[@]}" git -C "$workspace" -c user.name='Smoke Test' -c user.email='smoke@example.invalid' \
+    commit --allow-empty -qm 'Start demo'
+done
 
-# The DEB installs this desktop binary and puts the separate CLI on PATH.
-app_args=(--password-store=basic --remote-debugging-port=0 --disable-dev-shm-usage)
-# A disposable Docker container with no-new-privileges cannot use the Chromium setuid sandbox.
-if [[ ${ORCA_SMOKE_NO_SANDBOX:-0} == 1 ]]; then
-  app_args+=(--no-sandbox)
-fi
-setsid "${isolated[@]}" /opt/Orca/orca-ide "${app_args[@]}" >"$profile/orca.log" 2>&1 &
+# Put Electron and its helpers in a separate process group on both platforms.
+python3 -c 'import os, sys; os.setsid(); os.execvp(sys.argv[1], sys.argv[1:])' \
+  "${isolated[@]}" "$app" "${app_args[@]}" >"$profile/orca.log" 2>&1 &
 app_pid=$!
 
-port_file="$home/.config/orca/DevToolsActivePort"
+port_file="$user_data/DevToolsActivePort"
+debugger_ready() {
+  if [[ -z ${port:-} ]]; then
+    [[ -s "$port_file" ]] || return 1
+    read -r port <"$port_file"
+  fi
+  curl --fail --silent --max-time 2 "http://127.0.0.1:$port/json/version" >/dev/null
+}
 deadline=$((SECONDS + 45))
-until [[ -s "$port_file" ]] && orca status | jq -e '.result.runtime.reachable and .result.runtime.state == "ready"' >/dev/null; do
+until debugger_ready && orca status >"$profile/status.json" &&
+  jq -e '.result.runtime.reachable and .result.runtime.state == "ready"' "$profile/status.json" >/dev/null; do
   if ! kill -0 "$app_pid" 2>/dev/null || (( SECONDS >= deadline )); then
-    printf 'Orca did not start\n' >&2
+    printf 'Orca did not reach desktop readiness\n' >&2
+    if [[ -s "$profile/status.json" ]]; then
+      jq -c '{ok, error: .error.code, runtime: (.result.runtime | {reachable, state})}' "$profile/status.json" >&2
+    fi
     exit 1
   fi
   sleep 1
 done
-read -r port <"$port_file"
+printf 'Orca CLI and the desktop debugger are ready\n'
 
 orca repo add --path "$demo" >/dev/null
+orca repo add --path "$other" >/dev/null
 orca worktree activate --worktree "path:$demo" >/dev/null
 orca plugin system on >/dev/null
 approval_status=0
@@ -74,7 +135,10 @@ fingerprint=$(jq -er '.error.data.approvalFingerprint' "$profile/approval.json")
 orca plugin install "$plugin" --approve "$fingerprint" >/dev/null
 orca plugin open local.playbooks --panel playbooks >/dev/null
 
-node scripts/smoke-panel.mjs "$port" "$demo"
+if ! "${isolated[@]}" node scripts/smoke-panel.mjs "$port" "$demo" "$other" "$cli"; then
+  orca plugin shot local.playbooks --panel playbooks --out "$screenshot" >/dev/null || true
+  exit 1
+fi
 orca plugin shot local.playbooks --panel playbooks --out "$screenshot" |
   jq -e '.result | .settled and (.errors | length == 0)' >/dev/null
 test -s "$screenshot"

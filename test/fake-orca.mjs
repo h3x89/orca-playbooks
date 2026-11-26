@@ -51,6 +51,11 @@ const ok = (result) => {
 }
 
 const [group, command] = args
+if (group === 'fixture' && command === 'add-worker') {
+  state.workers.push(JSON.parse(args[2]))
+  ok({})
+  process.exit(0)
+}
 if (group === 'status') {
   ok({ runtime: { appVersion: process.env.FAKE_ORCA_HOST_VERSION }, app: { desktopWindowStatus: 'available' } })
   process.exit(0)

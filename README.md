@@ -461,11 +461,14 @@ Python 3, Git, and a SQLite CLI with JSON output and `-safe` support. They
 validate the manifest and example playbooks, check BPMN parity, and exercise
 the parser, timeline, and full runs against a fake Orca CLI. The checks run without opening the desktop app.
 
-Run **CI** manually with **Run the desktop smoke test under Xvfb** to try the
-same plugin inside Orca on Ubuntu. The **Revise and publish** demo uses a fresh
-profile and only script steps. It checks that **Revise** reruns the draft,
-publication waits for **Approve**, and the final file matches the result in the
-panel. The run includes a screenshot and a summary of the checks.
+Run **CI** manually with **Run the desktop smoke test under Xvfb** for Ubuntu
+(Orca 1.4.274) or **Run the desktop smoke test on macOS ARM64** (Orca 1.4.278).
+Both jobs load the plugin from the selected branch into a fresh Orca profile.
+The **Revise and publish** demo checks the plan preview without starting a new
+run, opens the pending decision from a second workspace, and confirms that
+**Approve** clears **Needs you**. It also checks that **Revise** reruns the draft
+and that the final file matches the result in the panel. The run includes a
+screenshot and a summary of the checks.
 
 The repository is public, and so is every commit and pull request: read `AGENTS.md` before changing it.
 
