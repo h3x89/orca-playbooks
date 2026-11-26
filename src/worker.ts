@@ -14,7 +14,7 @@ import { localFirstPrompts } from './firstPrompt'
 import { focusExistingNativeChat, NATIVE_CHAT_ORCA_VERSION } from './nativeChat'
 import { buildTimeline, parseTime, type CliGate, type CliMessage, type DispatchTimes } from './timeline'
 import { depths, loopSteps, parsePlaybook, renderPrompt, resolveInputs, topologicalOrder, type GateStep, type Playbook, type ScriptStep, type Step } from './playbook'
-import type { AgentLive, CatalogEntry, RunNode, OrcaRunSummary, PlaybookInfo, RunInfo, SessionAgent, SessionChild, SessionInfo, StepInfo, StepRun, TimelineEvent, TimelineStep, WorkspaceInfo } from './protocol'
+import type { AgentLive, CatalogEntry, RunNode, OrcaRunSummary, PlaybookInfo, RunInfo, SessionAgent, SessionChild, SessionInfo, StepInfo, StepRun, TimelineEvent, TimelineStep, UnavailableWaitingRun, WaitingDecision, WorkspaceInfo } from './protocol'
 
 const RUNS_KEY = 'runs.v2'
 const MAX_RUNS = 20
@@ -403,14 +403,67 @@ export default function activate(orca: OrcaWorkerApi): void {
       if (text) await orca.host.call('notifications.show', { title: `Playbooks: ${run.title}`, body: `${text} (${run.workspaceName})` }).catch(() => undefined)
     }
     orca.panels.post('runs.changed', { runs: runs.map(publicRun) })
-    const active = runs.filter((run) => run.status === 'running' || run.status === 'waiting')
-    const waiting = runs.filter((run) => run.status === 'waiting').length
+    refreshStatusBar()
+  }
+
+  let refreshingStatusBar = false
+  let statusRefreshPending = false
+  function refreshStatusBar(): void {
+    if (refreshingStatusBar) {
+      statusRefreshPending = true
+      return
+    }
+    refreshingStatusBar = true
+    statusRefreshPending = false
+    void workspaces()
+      .then((list) => updateStatusBar(decisionOverview(list).waitingDecisions.length))
+      .catch(() => undefined)
+      .finally(() => {
+        refreshingStatusBar = false
+        if (statusRefreshPending) refreshStatusBar()
+      })
+  }
+
+  let lastStatusText: string | undefined
+  async function updateStatusBar(waiting: number): Promise<void> {
+    const active = runs.filter((run) => run.status === 'running' || run.status === 'waiting').length
+    const text = active ? `Playbooks: ${active} active${waiting ? ` · ${waiting} waiting for you` : ''}` : 'Playbooks'
+    if (text === lastStatusText) return
+    lastStatusText = text
     await orca.host.call('statusBar.update', {
-      id: 'runs',
-      text: active.length ? `Playbooks: ${active.length} running${waiting ? ` · ${waiting} waiting for you` : ''}` : 'Playbooks',
+      id: 'runs', text,
       tone: waiting ? 'warning' : 'neutral',
-      tooltip: waiting ? 'A run waits for your decision in the Playbooks panel' : 'Playbooks panel'
-    }).catch(() => undefined)
+      tooltip: waiting ? 'Open decisions in Playbooks → Needs you' : 'Playbooks panel'
+    }).catch(() => {
+      if (lastStatusText === text) lastStatusText = undefined
+    })
+  }
+
+  function decisionOverview(list: WorkspaceInfo[]) {
+    const waitingDecisions: WaitingDecision[] = []
+    const unavailableRuns: UnavailableWaitingRun[] = []
+    for (const run of runs) {
+      if (run.status !== 'waiting') continue
+      const workspace = list.find((entry) => entry.id === run.workspaceId) ?? list.find((entry) => entry.path === run.workspacePath)
+      const openSteps = run.steps.filter((step) => {
+        const task = run.tasks[step.id]
+        return step.kind === 'gate' && !!task?.gateId && !task.decision
+      })
+      if (!workspace || !openSteps.length) {
+        unavailableRuns.push({
+          title: run.title, workspaceName: workspace?.name ?? run.workspaceName,
+          reason: workspace ? 'decision-unavailable' : 'workspace-unavailable'
+        })
+        continue
+      }
+      for (const step of openSteps) {
+        waitingDecisions.push({
+          workspaceId: workspace.id, runId: run.id, title: run.title, stepId: step.id, stepTitle: step.title,
+          ...(run.inputs?.ticket ? { ticket: run.inputs.ticket } : {})
+        })
+      }
+    }
+    return { waitingDecisions, unavailableRuns }
   }
 
   async function workspaces(): Promise<WorkspaceInfo[]> {
@@ -818,20 +871,9 @@ export default function activate(orca: OrcaWorkerApi): void {
       ? [...index.values()].filter((entry) => !own.has(entry.id) && !attached.has(entry.id) && entry.paths.includes(chosen!.path)).sort((a, b) => b.createdAt - a.createdAt).slice(0, ORCA_RUNS_SHOWN)
           .map(({ paths: _paths, bySession: _bySession, ...summary }) => summary)
       : []
-    const waitingElsewhere = runs.filter((run) => run.status === 'waiting' && run.workspaceId !== chosen?.id)
-      .map((run) => ({ runId: run.id, title: run.title, workspaceId: run.workspaceId, workspaceName: run.workspaceName }))
-    const waitingDecisions = runs.filter((run) => run.status === 'waiting').flatMap((run) => {
-      const workspace = list.find((entry) => entry.id === run.workspaceId || entry.path === run.workspacePath)
-      if (!workspace) return []
-      return run.steps.filter((step) => {
-        const task = run.tasks[step.id]
-        return step.kind === 'gate' && !!task?.gateId && !task.decision
-      }).map((step) => ({
-        workspaceId: workspace.id, runId: run.id, title: run.title, stepId: step.id, stepTitle: step.title,
-        ...(run.inputs?.ticket ? { ticket: run.inputs.ticket } : {})
-      }))
-    })
-    return json({ workspaces: list, workspaceId: chosen?.id ?? null, following, indexing: stillIndexing, playbooks: chosen ? await playbooksIn(chosen) : [], runs: shown, orcaRuns, sessions, waitingElsewhere, waitingDecisions })
+    const decisions = decisionOverview(list)
+    void updateStatusBar(decisions.waitingDecisions.length)
+    return json({ workspaces: list, workspaceId: chosen?.id ?? null, following, indexing: stillIndexing, playbooks: chosen ? await playbooksIn(chosen) : [], runs: shown, orcaRuns, sessions, ...decisions })
   })
 
   orca.panels.handle('catalog.list', async () => {

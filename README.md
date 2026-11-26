@@ -140,7 +140,7 @@ terminal supplies the run's identity in Orca.
 decides which tasks, dependencies, checks, and gates to create. A playbook
 shared as instructions gives it a procedure to follow.
 
-In **Run or conversation**, select an Orca Run with recorded dependencies to
+In **Viewing**, select an Orca Run with recorded dependencies to
 see its **Graph**. For work grouped under a conversation, use **Timeline** and
 **Agents** to see dispatches and results. [Panel reference](#the-panel)
 
@@ -152,15 +152,15 @@ Paseo](https://github.com/lerenn/paseo-playbooks#runs-with-no-playbook-manager)
 
 The panel opens on **Workspace**. **Needs you** groups open decisions by repository, and its count
 stays visible across the tabs. Select **Open decision** to go to the gate. After answering a gate
-opened from **Needs you**, the panel returns to the list.
+opened from **Needs you**, the panel returns to the list. Runs with an unavailable workspace or
+decision appear separately and do not increase the count.
 **Catalog** groups saved playbooks by local repository and shows their workspace or branch.
 **Open playbook** selects that YAML in its workspace. Click **Start** there to run it.
 
 **Workspace** follows the workspace selected in Orca's left sidebar (**Pin** keeps it on one). It shows:
 
-- the playbooks of the workspace and **Start**;
-- **Run or conversation**: playbook runs, conversations of this workspace that started agents, and other
-  Orca Runs whose workers worked here;
+- **Playbook to run** lists local playbooks. Changing it opens the selected plan preview immediately. **Start** launches that plan.
+- **Viewing** switches among the plan preview, playbook runs, conversations, and other Orca Runs whose workers worked here.
 - the same tab row for each of them: **Graph | Timeline | Agents (N)**.
 
 | Tab | Playbook run | Orca Run started by an agent | Conversation |
@@ -178,9 +178,10 @@ and **Open decision**. Recorded agent attempts show their report and last lines.
 keeps its own output preview. If an older script attempt has no saved preview, the panel marks it as
 unavailable. Opening a file from the current attempt uses Orca's editor.
 
-A decision card appears below the workspace name when a gate waits for you, and a banner when one waits in another
-workspace. Orca notifications and the status bar item say when a run waits for you, fails, is sent back
-or finishes.
+A decision card appears below the workspace name when the selected run waits for your decision.
+**Needs you** is the place to find decisions across workspaces. The status bar shows the number of
+open decisions you can act on. Orca also sends notifications when runs wait for a decision, fail,
+are sent back or finish.
 
 ### Open an agent chat (experimental)
 

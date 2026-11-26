@@ -88,6 +88,30 @@ try {
   assert.equal(result, expected)
   await evaluate("document.querySelector('#resultBox').scrollIntoView({ block: 'nearest' })")
   console.log('Verified one seed, two drafts, and one publish after approval. Disk and panel results match.')
+  const finishedRun = await evaluate("document.querySelector('#run').value")
+  assert.match(finishedRun, /^pb:/)
+  const preview = await evaluate(`(() => {
+    const playbook = document.querySelector('#playbook')
+    playbook.value = 'zz-preview.yaml'
+    playbook.dispatchEvent(new Event('change'))
+    return {
+      view: document.querySelector('#run').value,
+      heading: document.querySelector('#runSource').textContent,
+      nodes: [...document.querySelectorAll('[data-node]')].map((node) => node.dataset.node),
+    }
+  })()`)
+  assert.deepEqual(preview, {
+    view: 'definition', heading: 'Plan preview · Preview check', nodes: ['preview-only'],
+  }, 'Changing a playbook switches both the view selector and the rendered graph immediately')
+  assert.deepEqual(readdirSync(runs), [directories[0].name], 'Plan preview does not start a new run')
+  const returned = await evaluate(`(() => {
+    const run = document.querySelector('#run')
+    run.value = ${JSON.stringify(finishedRun)}
+    run.dispatchEvent(new Event('change'))
+    return document.querySelector('#runBadge').textContent.trim()
+  })()`)
+  assert.equal(returned, 'finished', 'The previous run remains selectable')
+  console.log('Verified immediate plan preview, no automatic start, and return to the finished run.')
 } finally {
   socket.close()
 }

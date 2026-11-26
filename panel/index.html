@@ -44,7 +44,6 @@
       .where > span { flex: 1; min-width: 0; overflow-wrap: anywhere; }
       .where > button { flex: none; }
       .where b { font-weight: 600; }
-      .banner { margin-top: 8px; padding: 6px 8px; border-radius: 8px; border: 1px solid var(--line); display: flex; justify-content: space-between; align-items: center; gap: 8px; }
       .gate { border-color: color-mix(in srgb, var(--gate) 38%, var(--bg)); border-inline-start: 3px solid var(--gate); background: color-mix(in srgb, var(--gate) 10%, var(--bg)); }
       .gate h2 { font-size: 14px; margin: 0 0 6px; }
       .gate pre { background: var(--bg); }
@@ -164,10 +163,9 @@
       <label for="workspace">Workspace</label>
       <select id="workspace"></select>
     </div>
-    <div id="banner"></div>
     <div id="gate" tabindex="-1"></div>
 
-    <label for="playbook">Playbook</label>
+    <label for="playbook">Playbook to run</label>
     <select id="playbook"></select>
     <div id="run-inputs" hidden></div>
     <div id="description" class="muted small" style="margin-top:4px"></div>
@@ -177,7 +175,7 @@
     </div>
     <div id="msg" class="msg"></div>
 
-    <label for="run">Run or conversation</label>
+    <label for="run">Viewing</label>
     <select id="run"></select>
     <div id="runSource" class="muted small"></div>
     <div id="indexNote" class="muted small" style="margin-top:4px"></div>
@@ -217,7 +215,7 @@
     <script>
       const $ = (id) => document.getElementById(id)
       const state = {
-        workspaceId: null, following: false, pinned: null, workspaces: [], playbooks: [], runs: [], orcaRuns: [], waitingElsewhere: [],
+        workspaceId: null, following: false, pinned: null, workspaces: [], playbooks: [], runs: [], orcaRuns: [], unavailableRuns: [],
         sel: null, nodes: {}, selected: null, lines: {}, busy: false, openOutputs: new Set(),
         timelineRow: null, chatFeedback: null, gateRequests: new Map(),
         sessions: [], home: 'workspace', queueDecision: null, waitingDecisions: [], catalog: null, view: null, timelines: {}, timelineErrors: {}, stale: new Set(), sessionViews: {}, showAllAgents: false, selectedSession: null, followBottom: true, detailsOpen: {}
@@ -298,7 +296,7 @@
           }
           Object.assign(state, {
             workspaceId: answer.workspaceId, following: answer.following, indexing: answer.indexing, workspaces: answer.workspaces, playbooks: answer.playbooks,
-            runs: answer.runs, orcaRuns: answer.orcaRuns, sessions: answer.sessions ?? [], waitingElsewhere: answer.waitingElsewhere,
+            runs: answer.runs, orcaRuns: answer.orcaRuns, sessions: answer.sessions ?? [], unavailableRuns: answer.unavailableRuns ?? [],
             waitingDecisions: answer.waitingDecisions ?? [], loaded: true
           })
           const opened = target && answer.workspaceId === target.workspaceId
@@ -438,17 +436,23 @@
         const groups = projectGroups(rows)
         const empty = needs ? (state.loaded ? 'No decisions are waiting.' : 'Reading decisions…')
           : state.catalogError || (state.catalog ? 'No playbooks in local workspaces.' : 'Reading playbooks…')
-        const key = JSON.stringify([groups, empty])
+        const unavailable = needs ? state.unavailableRuns : []
+        const key = JSON.stringify([groups, unavailable, empty])
         if (key === panel.dataset.key) return
         panel.dataset.key = key
         const focused = panel.contains(document.activeElement) ? document.activeElement.dataset.target : null
-        panel.innerHTML = groups.length ? groups.map((group) => `<section class="project-block"><h2>${esc(group.name)}</h2>${
+        const groupedRows = groups.map((group) => `<section class="project-block"><h2>${esc(group.name)}</h2>${
           group.rows.map((row) => `<article class="overview-row"><div><h3>${needs ? '<span class="decision-mark" aria-hidden="true">◆</span> ' : ''}${esc(row.title)}</h3>
             <div class="muted small">${esc(workspaceLabel(row.workspace))}${row.detail ? ' · ' + esc(row.detail) : ''}</div>
             ${row.file ? `<code>.orca/playbooks/${esc(row.file)}</code>` : ''}
             ${row.error ? `<div class="err small">${esc(row.error)}</div>` : ''}</div>
             ${row.target ? `<button class="small" data-target="${esc(JSON.stringify(row.target))}">${needs ? 'Open decision' : 'Open playbook'}</button>` : ''}</article>`).join('')
-        }</section>`).join('') : `<p class="muted">${esc(empty)}</p>`
+        }</section>`).join('')
+        const unavailableRows = unavailable.length ? `<section class="project-block"><h2>Unavailable decisions</h2>${unavailable.map((run) =>
+          `<article class="overview-row"><div><h3>${esc(run.title)}</h3>
+            <div class="muted small">${esc(run.workspaceName)} · ${run.reason === 'workspace-unavailable' ? 'Workspace unavailable' : 'Decision unavailable'}</div>
+          </div></article>`).join('')}</section>` : ''
+        panel.innerHTML = groupedRows + unavailableRows || `<p class="muted">${esc(empty)}</p>`
         if (focused) ([...panel.querySelectorAll('button[data-target]')].find((item) => item.dataset.target === focused) ?? $(needs ? 'needs-tab' : 'catalog-tab')).focus()
       }
 
@@ -495,11 +499,6 @@
         if ($('pin')) $('pin').onclick = () => { state.pinned = state.pinned ? null : state.workspaceId; state.sel = null; void load() }
         $('pickWrap').style.display = !state.pinned && !state.following ? '' : 'none'
         $('workspace').replaceChildren(...state.workspaces.map((w) => option(w.id, `${w.name}${w.branch ? ' · ' + w.branch : ''} — ${w.path}`, w.id === state.workspaceId)))
-        $('banner').innerHTML = state.waitingElsewhere.map((w) =>
-          `<div class="banner"><span><span class="decision-mark" aria-hidden="true">◆</span> ${esc(w.title)} waits for you in <b>${esc(w.workspaceName)}</b></span><button class="small" data-goto="${esc(w.workspaceId)}">Go</button></div>`).join('')
-        for (const button of $('banner').querySelectorAll('button[data-goto]')) {
-          button.onclick = () => orca.plugin.request('workspace.goto', { workspaceId: button.dataset.goto }).catch((error) => setMsg(error.message ?? String(error), true))
-        }
         const pb = $('playbook')
         const current = state.preferredFile ?? pb.value
         state.preferredFile = null
@@ -514,7 +513,7 @@
           ...state.orcaRuns.map((r) => ({ key: `orca:${r.id}`, label: `Orca Run: ${cut(r.title || r.objective || r.id, 60)}${r.active ? ' · running' : ''} · ${time(r.createdAt)}`, at: r.createdAt })),
           ...roots.map((session) => ({ key: `ses:${session.id}`, label: `Conversation: ${cut(session.title, 50)} · ${session.agents ? agentsWord(session.agents) : sessionStatus(session)[0]}`, at: session.updatedAt ?? session.since ?? 0 }))
         ].sort((a, b) => b.at - a.at)
-        if (state.playbooks.length) choices.push({ key: 'definition', label: 'Playbook definition' })
+        if (state.playbooks.length) choices.push({ key: 'definition', label: 'Plan preview' })
         if (!state.sel || !choices.some((choice) => choice.key === state.sel)) {
           const waiting = state.runs.find((r) => r.status === 'waiting') ?? state.runs.find((r) => r.status === 'running')
           const activeRun = state.orcaRuns.find((r) => r.active)
@@ -636,7 +635,11 @@
           : viewNodes()
         const agentLed = runId && state.orcaRuns.find((candidate) => candidate.id === runId)?.coordinatedByAgent
         const source = agentLed && !nodes.some((node) => node.attempt !== undefined) ? 'Agent-led run' : 'Orca Run'
-        $('runSource').textContent = { playbook: 'YAML playbook', orca: source, session: 'Conversation', preview: playbook ? 'Playbook plan' : '' }[kind]
+        $('runSource').textContent = {
+          playbook: run ? `Playbook run · ${run.title}` : '',
+          orca: source, session: 'Conversation',
+          preview: playbook ? `Plan preview · ${playbook.title}` : ''
+        }[kind]
         const agents = kind === 'session' ? groupWorkers(nodes) : nodes.filter((node) => node.kind === 'agent' && (kind === 'playbook' || node.dispatchId))
         const view = kind === 'preview' ? 'graph' : state.view ?? defaultView(kind, nodes)
         renderTabs(kind, view, kind === 'session' && !sessionView ? null : agents.length)
@@ -1345,8 +1348,26 @@
         }
       }
       $('workspace').onchange = (event) => { state.queueDecision = null; state.pinned = event.target.value; state.sel = null; void load() }
-      $('playbook').onchange = () => { renderInputs(); $('start').disabled = !state.playbooks.some((p) => p.file === $('playbook').value && !p.errors.length); setMsg(''); void render() }
-      $('run').onchange = (event) => { state.queueDecision = null; state.picked = true; state.sel = event.target.value || null; state.selected = null; state.gateStep = null; state.view = null; state.selectedSession = null; state.followBottom = true; state.showAllAgents = false; void render() }
+      function selectView(value) {
+        $('run').value = value
+        state.queueDecision = null
+        state.picked = true
+        state.sel = value || null
+        state.selected = null
+        state.gateStep = null
+        state.view = null
+        state.selectedSession = null
+        state.followBottom = true
+        state.showAllAgents = false
+        void render()
+      }
+      $('playbook').onchange = () => {
+        renderInputs()
+        $('start').disabled = state.busy || !state.playbooks.some((p) => p.file === $('playbook').value && !p.errors.length)
+        setMsg('')
+        selectView('definition')
+      }
+      $('run').onchange = (event) => selectView(event.target.value)
       $('refresh').onclick = () => { state.nodes = {}; state.lines = {}; state.timelines = {}; state.timelineErrors = {}; state.sessionViews = {}; void load() }
       $('start').onclick = async () => {
         const file = $('playbook').value

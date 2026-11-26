@@ -1,5 +1,10 @@
 # Changelog
 
+## 0.5.7
+
+- Choosing a playbook in Workspace immediately opens its named plan preview. Use the Viewing list to return to a run or conversation.
+- Needs you collects open decisions across workspaces. Unavailable runs appear there without an action or an increase in the decision count.
+
 ## 0.5.6
 
 - Show a waiting review and its **Approve** action directly below the workspace

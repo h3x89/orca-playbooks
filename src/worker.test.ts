@@ -70,14 +70,15 @@ function setup() {
     focus: { workspaceId: 'repo1::' + workspace, branch: 'main', displayName: 'demo', terminals: [] } as Record<string, unknown> | null,
     localJournalPath: '',
     experimentalOpenChat: false,
+    otherAvailable: true,
     agents: [] as { terminalId: string | null; title: string | null; agent: string | null; state: string; stateStartedAt: number; task?: { title: string } | null }[]
   }
   const host = mockHost({
     results: {
-      'workspace.list': { workspaces: [
+      'workspace.list': () => ({ workspaces: [
         { id: 'repo1::' + workspace, kind: 'worktree', name: 'demo', projectId: 'project-a', project: 'Repository A', path: workspace, branch: 'main', hostId: 'local' },
         { id: 'repo2::' + other, kind: 'worktree', name: 'other', projectId: 'project-b', project: 'Repository B', path: other, branch: 'feature', hostId: 'local' }
-      ], truncated: false },
+      ].filter((entry) => world.otherAvailable || entry.path !== other), truncated: false }),
       'workspace.readContext': () => world.focus,
       'agents.list': () => ({ agents: world.agents }),
       'settings.get': () => ({ settings: { localJournalPath: world.localJournalPath, experimentalOpenChat: world.experimentalOpenChat } }),
@@ -630,7 +631,7 @@ test('keeps free-form text in one CLI option when it begins with a hyphen', asyn
 })
 
 test('lists saved playbooks by workspace and all open decisions across repositories', async () => {
-  const { workspace, other, host } = setup()
+  const { workspace, other, host, world } = setup()
   const file = 'decisions.yaml'
   const definitions = { title: 'Ticket choices', steps: [
     { id: 'approval', title: 'Approve the plan', gate: { question: 'Approve?' } },
@@ -666,6 +667,58 @@ test('lists saved playbooks by workspace and all open decisions across repositor
   await mounted.request('gate.resolve', { runId: second.id, stepId: 'review', choice: 'ok' })
   assert.equal((await read()).waitingDecisions.length, 3)
   assert.equal((await read()).waitingDecisions.some((entry) => entry.runId === second.id && entry.stepId === 'review'), false)
+
+  world.otherAvailable = false
+  const unavailable = await read()
+  assert.deepEqual(unavailable.waitingDecisions.map((entry) => entry.runId), [first.id, first.id])
+  assert.deepEqual(unavailable.unavailableRuns, [{
+    title: 'Ticket choices', workspaceName: 'other', reason: 'workspace-unavailable'
+  }])
+  assert.match((host.callsOf('statusBar.update').at(-1) as { text: string }).text, /2 waiting for you$/)
+
+  world.otherAvailable = true
+  assert.equal((await read()).waitingDecisions.length, 3)
+  assert.deepEqual((await read()).unavailableRuns, [])
+})
+
+test('refreshes the status bar when a gate closes during an in-flight update', { timeout: 10000 }, async () => {
+  const { workspace, host } = setup()
+  const file = 'approval.yaml'
+  writeFileSync(path.join(workspace, '.orca', 'playbooks', file), YAML.stringify({
+    title: 'Approve a draft',
+    steps: [{ id: 'approval', title: 'Approve the draft', gate: { question: 'Publish?' } }]
+  }))
+  const mounted = await mountWorker(worker, { host })
+  const { workspaceId } = await mounted.request('state.get', {})
+  let showWarning!: () => void
+  const warning = new Promise<void>((resolve) => { showWarning = resolve })
+  let finishUpdate!: (result: { ok: boolean }) => void
+  const statusUpdate = new Promise<{ ok: boolean }>((resolve) => { finishUpdate = resolve })
+  host.respond('statusBar.update', ({ text }: { text: string }) => {
+    if (!text.endsWith('1 waiting for you')) return Promise.resolve({ ok: true })
+    showWarning()
+    return statusUpdate
+  })
+  try {
+    const { run } = await mounted.request('run.start', { workspaceId: workspaceId!, file })
+    await warning
+    const readSavedRun = async () => {
+      const post = mounted.posts.findLast((entry) => entry.event === 'runs.changed')
+      return (post?.payload as { runs: RunInfo[] }).runs.find((entry) => entry.id === run.id)!
+    }
+    const waiting = await readSavedRun()
+    execFileSync(process.env.ORCA_CLI_COMMAND!, ['orchestration', 'gate-resolve', '--id', waiting.tasks.approval.gateId!, '--resolution', 'ok', '--json'])
+    await until(readSavedRun, (entry) => entry.status === 'done')
+  } finally {
+    finishUpdate({ ok: true })
+  }
+  // No panel state.get call should be needed to clear the waiting count.
+  for (let attempt = 0; attempt < 50; attempt += 1) {
+    const text = (host.callsOf('statusBar.update').at(-1) as { text: string }).text
+    if (text === 'Playbooks') return
+    await new Promise((resolve) => setTimeout(resolve, 20))
+  }
+  assert.fail('The status bar kept the old waiting count after approval.')
 })
 
 test('the generated BPMN graph keeps the revision loop and fails closed on BLOCK', async () => {
