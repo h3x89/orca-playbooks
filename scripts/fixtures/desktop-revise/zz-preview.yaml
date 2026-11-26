@@ -1,0 +1,5 @@
+title: Preview check
+steps:
+  - id: preview-only
+    title: Check the selected plan
+    script: { run: fixture.sh }

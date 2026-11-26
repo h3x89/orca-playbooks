@@ -54,9 +54,12 @@ try {
   await evaluate("document.querySelector('#start').click()")
   const firstGate = await waitForGate('DRAFT 1')
   const runs = join(process.argv[3], '.orca', 'runs')
-  const directories = readdirSync(runs, { withFileTypes: true }).filter((entry) => entry.isDirectory())
+  const runDirectories = () => readdirSync(runs, { withFileTypes: true })
+    .filter((entry) => entry.isDirectory())
+    .map((entry) => entry.name)
+  const directories = runDirectories()
   assert.equal(directories.length, 1, 'Expected one run of the demo playbook')
-  const run = join(runs, directories[0].name)
+  const run = join(runs, directories[0])
   const read = (file) => readFileSync(join(run, file), 'utf8')
   const publish = join(run, 'publish.txt')
   assert.equal(read('executions.log'), 'seed\ndraft\n')
@@ -88,6 +91,36 @@ try {
   assert.equal(result, expected)
   await evaluate("document.querySelector('#resultBox').scrollIntoView({ block: 'nearest' })")
   console.log('Verified one seed, two drafts, and one publish after approval. Disk and panel results match.')
+  const finishedRun = await evaluate("document.querySelector('#run').value")
+  assert.match(finishedRun, /^pb:/)
+  const preview = await evaluate(`(() => {
+    const playbook = document.querySelector('#playbook')
+    playbook.value = 'zz-preview.yaml'
+    playbook.dispatchEvent(new Event('change'))
+    return {
+      view: document.querySelector('#run').value,
+      heading: document.querySelector('#runSource').textContent,
+      nodes: [...document.querySelectorAll('[data-node]')].map((node) => node.dataset.node),
+    }
+  })()`)
+  assert.deepEqual(preview, {
+    view: 'definition', heading: 'Plan preview · Preview check', nodes: ['preview-only'],
+  }, 'Changing a playbook switches both the view selector and the rendered graph immediately')
+  assert.deepEqual(runDirectories(), directories, 'Plan preview does not start a new run')
+  const returned = await evaluate(`(() => {
+    const run = document.querySelector('#run')
+    run.value = ${JSON.stringify(finishedRun)}
+    run.dispatchEvent(new Event('change'))
+    return {
+      view: run.value,
+      heading: document.querySelector('#runSource').textContent,
+      finished: document.querySelector('#runBadge').textContent.includes('finished'),
+    }
+  })()`)
+  assert.deepEqual(returned, {
+    view: finishedRun, heading: 'Playbook run · Revise and publish', finished: true,
+  }, 'The previous run remains selectable')
+  console.log('Verified immediate plan preview, no automatic start, and return to the finished run.')
 } finally {
   socket.close()
 }

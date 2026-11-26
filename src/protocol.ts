@@ -197,8 +197,8 @@ export type SessionInfo = {
 /** One agent a conversation started: a task of one of its Runs, with its worker. */
 export type SessionAgent = RunNode & { runId: string; startedAt?: number; endedAt?: number; workerSessionId?: string }
 
-/** A playbook run waiting for a decision in another workspace. */
-export type WaitingElsewhere = { runId: string; title: string; workspaceId: string; workspaceName: string }
+/** A waiting run that cannot be opened as a decision. */
+export type UnavailableWaitingRun = { title: string; workspaceName: string; reason: 'workspace-unavailable' | 'decision-unavailable' }
 
 declare module 'orca' {
   interface PluginRequests {
@@ -216,7 +216,7 @@ declare module 'orca' {
         runs: RunInfo[]
         orcaRuns: OrcaRunSummary[]
         sessions: SessionInfo[]
-        waitingElsewhere: WaitingElsewhere[]
+        unavailableRuns: UnavailableWaitingRun[]
         waitingDecisions: WaitingDecision[]
       }
     }

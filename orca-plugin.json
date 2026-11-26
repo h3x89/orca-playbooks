@@ -2,7 +2,7 @@
   "manifestVersion": 2,
   "id": "playbooks",
   "name": "Playbooks",
-  "version": "0.5.6",
+  "version": "0.5.7",
   "description": "Run parallel checks and agent workflows from YAML in your repository. Follow progress in a live graph and approve the next step in Orca.",
   "author": { "name": "h3x89" },
   "repository": "https://github.com/h3x89/orca-playbooks",
@@ -51,6 +51,10 @@
         "type": "boolean",
         "default": false
       }
+    ],
+    "events": [
+      { "on": "workspace.created" },
+      { "on": "workspace.removed" }
     ],
     "statusBarItems": [
       {
