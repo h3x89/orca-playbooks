@@ -6,9 +6,9 @@ checks in parallel, inspect their results, and keep the final decision with a pe
 
 [Install and try it](#quick-start) · [How it works](#two-ways-to-coordinate-work-in-orca) · [YAML reference](#playbook-format) · [Permissions](#trust)
 
-![Playbooks panel showing two completed pull request checks, a shared summary, and a review waiting for approval](docs/images/pull-request-review.png)
+![Pull Request Review — Playbook: two checks start in parallel, Revise reruns the cache check, and a reviewer approves the updated result](docs/images/pull-request-review-playbook.gif)
 
-*Sample pull request review. The demo uses fixed results and runs without an agent account.*
+*Illustrative run with fictional data. It shows the graph, selected timeline events, agent results, and the human decision. The [quick-start demo](#quick-start) uses fixed script results, runs without an agent account, and ends on Revise.*
 
 ## Quick start
 
