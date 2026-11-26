@@ -817,6 +817,13 @@ export default function activate(orca: OrcaWorkerApi): void {
       }
     }
   }
+  async function refreshDecisionsOnWorkspaceChange(): Promise<void> {
+    await load()
+    if (!stopping && runs.some((run) => run.status === 'waiting')) refreshStatusBar()
+  }
+  orca.events.on('workspace.created', refreshDecisionsOnWorkspaceChange)
+  orca.events.on('workspace.removed', refreshDecisionsOnWorkspaceChange)
+
   track(load().then(save).catch(() => undefined))
   // The first read of Orca Runs takes seconds after a start; begin it now instead of on the first panel request.
   void refreshIndex().catch(() => undefined)

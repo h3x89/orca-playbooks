@@ -52,6 +52,10 @@
         "default": false
       }
     ],
+    "events": [
+      { "on": "workspace.created" },
+      { "on": "workspace.removed" }
+    ],
     "statusBarItems": [
       {
         "id": "runs",

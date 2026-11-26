@@ -668,15 +668,20 @@ test('lists saved playbooks by workspace and all open decisions across repositor
   assert.equal((await read()).waitingDecisions.length, 3)
   assert.equal((await read()).waitingDecisions.some((entry) => entry.runId === second.id && entry.stepId === 'review'), false)
 
+  const statusText = () => (host.callsOf('statusBar.update').at(-1) as { text: string }).text
+  const otherWorkspace = { workspaceId: second.workspaceId, kind: 'worktree' as const, path: other }
   world.otherAvailable = false
+  await mounted.emit('workspace.removed', otherWorkspace)
+  assert.match(statusText(), /2 waiting for you$/)
   const unavailable = await read()
   assert.deepEqual(unavailable.waitingDecisions.map((entry) => entry.runId), [first.id, first.id])
   assert.deepEqual(unavailable.unavailableRuns, [{
     title: 'Ticket choices', workspaceName: 'other', reason: 'workspace-unavailable'
   }])
-  assert.match((host.callsOf('statusBar.update').at(-1) as { text: string }).text, /2 waiting for you$/)
 
   world.otherAvailable = true
+  await mounted.emit('workspace.created', { ...otherWorkspace, branch: 'feature' })
+  assert.match(statusText(), /3 waiting for you$/)
   assert.equal((await read()).waitingDecisions.length, 3)
   assert.deepEqual((await read()).unavailableRuns, [])
 })
