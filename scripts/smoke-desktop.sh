@@ -52,7 +52,8 @@ case "$(uname -s)" in
       printf 'The runner already has an Orca profile\n' >&2
       exit 1
     fi
-    isolated=(env -i "PATH=$PATH" "HOME=$HOME" CI=1 ORCA_BACKGROUND_LAUNCH=1 "ORCA_USER_DATA_PATH=$user_data")
+    isolated=(env -i "PATH=$bundle/Contents/Resources/bin:$PATH" "HOME=$HOME" CI=1
+      ORCA_BACKGROUND_LAUNCH=1 "ORCA_USER_DATA_PATH=$user_data")
     port=$(python3 -c 'import socket; s=socket.socket(); s.bind(("127.0.0.1", 0)); print(s.getsockname()[1])')
     app_args=("--remote-debugging-port=$port")
     ;;
