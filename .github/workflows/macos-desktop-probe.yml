@@ -1,0 +1,52 @@
+name: macOS desktop probe
+
+on:
+  push:
+    branches: [h3x89/macos-desktop-probe]
+
+permissions:
+  contents: read
+
+jobs:
+  desktop-probe:
+    runs-on: macos-15
+    timeout-minutes: 12
+    steps:
+      - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
+        with:
+          persist-credentials: false
+
+      - uses: actions/setup-node@949feb2413d6458794dcd2491c4babbbce0c15c1 # v7.1.0
+        with:
+          node-version: '22'
+          package-manager-cache: false
+
+      - name: Extract the pinned Orca desktop build
+        shell: bash
+        env:
+          ORCA_ARCHIVE_SHA256: d832885a97a7f58bf27917ca42404d0b98c835062f92d5502c94ab7278c7ba08
+        run: |
+          test "$(uname -m)" = arm64
+          archive="$RUNNER_TEMP/orca.zip"
+          curl --fail --silent --show-error --location --retry 3 \
+            --output "$archive" \
+            https://github.com/stablyai/orca/releases/download/v1.4.278/Orca-1.4.278-arm64-mac.zip
+          printf '%s  %s\n' "$ORCA_ARCHIVE_SHA256" "$archive" | shasum -a 256 -c
+          /usr/bin/ditto -x -k "$archive" "$RUNNER_TEMP/orca-desktop"
+          test -x "$RUNNER_TEMP/orca-desktop/Orca.app/Contents/MacOS/Orca"
+
+      - name: Run the Playbooks demo in a fresh profile
+        shell: bash
+        run: |
+          if ! command -v timeout >/dev/null && ! command -v gtimeout >/dev/null; then
+            brew install coreutils
+          fi
+          export ORCA_SMOKE_MAC_APP="$RUNNER_TEMP/orca-desktop/Orca.app"
+          ./scripts/smoke-desktop.sh "$RUNNER_TEMP/playbooks-macos.png"
+
+      - uses: actions/upload-artifact@cf430e030ddbb5b0abf93d22962f4752f3646cd9 # v7.0.2
+        with:
+          name: playbooks-macos-desktop
+          path: ${{ runner.temp }}/playbooks-macos.png
+          if-no-files-found: error
+          retention-days: 7

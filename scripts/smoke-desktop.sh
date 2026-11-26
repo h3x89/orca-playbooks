@@ -3,7 +3,7 @@ set -euo pipefail
 
 cd -- "$(dirname -- "${BASH_SOURCE[0]}")/.."
 plugin=$PWD
-screenshot=${1:?Usage: xvfb-run -a ./scripts/smoke-desktop.sh /path/to/panel.png}
+screenshot=${1:?Usage: ./scripts/smoke-desktop.sh /path/to/panel.png}
 profile=$(mktemp -d)
 home="$profile/home"
 demo="$profile/demo"
@@ -30,26 +30,48 @@ trap cleanup EXIT
 
 mkdir -p "$home/.config" "$home/.cache" "$demo/.orca"
 cp -R scripts/fixtures/desktop-revise "$demo/.orca/playbooks"
-isolated=(env -i "PATH=$PATH" "HOME=$home" "DISPLAY=${DISPLAY:?Run under Xvfb}"
-  "XAUTHORITY=${XAUTHORITY:?Run under xvfb-run}" CI=1 ORCA_BACKGROUND_LAUNCH=1)
+isolated=(env -i "PATH=$PATH" "HOME=$home" CI=1 ORCA_BACKGROUND_LAUNCH=1)
+app_args=(--remote-debugging-port=0)
+case "$(uname -s)" in
+  Darwin)
+    bundle=${ORCA_SMOKE_MAC_APP:?Set ORCA_SMOKE_MAC_APP to the extracted app bundle}
+    app="$bundle/Contents/MacOS/Orca"
+    cli="$bundle/Contents/Resources/bin/orca"
+    user_data="$profile/orca"
+    isolated+=("ORCA_USER_DATA_PATH=$user_data")
+    app_args+=("--user-data-dir=$user_data")
+    ;;
+  Linux)
+    app=/opt/Orca/orca-ide
+    cli=orca-ide
+    user_data="$home/.config/orca"
+    isolated+=("DISPLAY=${DISPLAY:?Run under Xvfb}" "XAUTHORITY=${XAUTHORITY:?Run under xvfb-run}")
+    app_args+=(--password-store=basic --disable-dev-shm-usage)
+    # A disposable Docker container can prohibit the Chromium setuid sandbox.
+    if [[ ${ORCA_SMOKE_NO_SANDBOX:-0} == 1 ]]; then
+      app_args+=(--no-sandbox)
+    fi
+    ;;
+  *)
+    printf 'Unsupported desktop platform\n' >&2
+    exit 1
+    ;;
+esac
+timeout_cmd=$(command -v timeout || command -v gtimeout)
 orca() {
-  timeout 25s "${isolated[@]}" orca-ide "$@" --json
+  "$timeout_cmd" 25s "${isolated[@]}" "$cli" "$@" --json
 }
 
 "${isolated[@]}" git -C "$demo" init -q -b main
 "${isolated[@]}" git -C "$demo" -c user.name='Smoke Test' -c user.email='smoke@example.invalid' \
   commit --allow-empty -qm 'Start demo'
 
-# The DEB installs this desktop binary and puts the separate CLI on PATH.
-app_args=(--password-store=basic --remote-debugging-port=0 --disable-dev-shm-usage)
-# A disposable Docker container with no-new-privileges cannot use the Chromium setuid sandbox.
-if [[ ${ORCA_SMOKE_NO_SANDBOX:-0} == 1 ]]; then
-  app_args+=(--no-sandbox)
-fi
-setsid "${isolated[@]}" /opt/Orca/orca-ide "${app_args[@]}" >"$profile/orca.log" 2>&1 &
+# Put Electron and its helpers in a separate process group on both platforms.
+python3 -c 'import os, sys; os.setsid(); os.execvp(sys.argv[1], sys.argv[1:])' \
+  "${isolated[@]}" "$app" "${app_args[@]}" >"$profile/orca.log" 2>&1 &
 app_pid=$!
 
-port_file="$home/.config/orca/DevToolsActivePort"
+port_file="$user_data/DevToolsActivePort"
 deadline=$((SECONDS + 45))
 until [[ -s "$port_file" ]] && orca status | jq -e '.result.runtime.reachable and .result.runtime.state == "ready"' >/dev/null; do
   if ! kill -0 "$app_pid" 2>/dev/null || (( SECONDS >= deadline )); then
