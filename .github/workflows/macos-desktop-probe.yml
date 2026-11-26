@@ -3,14 +3,16 @@ name: macOS desktop probe
 on:
   push:
     branches: [h3x89/macos-desktop-probe]
-    paths: [scripts/smoke-desktop.sh]
+    paths:
+      - .github/workflows/macos-desktop-probe.yml
+      - scripts/smoke-desktop.sh
 
 permissions:
   contents: read
 
 jobs:
   desktop-probe:
-    runs-on: macos-15
+    runs-on: macos-26
     timeout-minutes: 12
     steps:
       - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
