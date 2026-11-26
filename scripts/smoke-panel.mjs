@@ -139,9 +139,24 @@ try {
   assert.equal(await evaluate("document.querySelector('#run').value"), waitingRun)
   await waitForGate('DRAFT 2')
   await evaluate("document.querySelector('#gateOk').click()")
-  await until('an empty decision queue', () => evaluate(
-    "document.querySelector('#needs-count').textContent === '0' && document.querySelector('#needs-panel').textContent.includes('No decisions are waiting.')"
-  ))
+  let approval
+  try {
+    await until('the pending decision count to reach zero', async () => {
+      approval = await evaluate(`({
+        count: document.querySelector('#needs-count').textContent,
+        gateMessage: document.querySelector('#gate-message')?.textContent,
+        overviewMessage: document.querySelector('#overview-message').textContent,
+        message: document.querySelector('#msg').textContent,
+      })`)
+      if (approval.gateMessage?.startsWith('Could not send the decision')) throw new Error(approval.gateMessage)
+      return approval.count === '0'
+    }, 35_000)
+  } catch (error) {
+    console.error('Approval state:', approval)
+    throw error
+  }
+  await evaluate("document.querySelector('#needs-tab').click()")
+  assert.match(await evaluate("document.querySelector('#needs-panel').textContent"), /No decisions are waiting\./)
   await evaluate("document.querySelector('#workspace-tab').click()")
   await until('the finished run', () => evaluate(
     "document.querySelector('#runBadge').textContent.includes('finished')"
