@@ -1,4 +1,5 @@
 import assert from 'node:assert/strict'
+import { execFileSync } from 'node:child_process'
 import { once } from 'node:events'
 import { existsSync, readdirSync, readFileSync } from 'node:fs'
 import { join } from 'node:path'
@@ -14,7 +15,9 @@ async function until(label, check, timeout = 20_000) {
   throw new Error(`Timed out waiting for ${label}`)
 }
 
-const port = Number(process.argv[2])
+const [, , portArg, demo, other, cli] = process.argv
+assert(demo && other && cli, 'Expected two demo workspaces and the Orca CLI')
+const port = Number(portArg)
 assert(Number.isInteger(port) && port > 0 && port <= 65535, 'Expected a debugger port')
 const guest = await until('the Playbooks webview', async () => {
   const response = await fetch(`http://127.0.0.1:${port}/json/list`, { signal: AbortSignal.timeout(3000) })
@@ -51,9 +54,12 @@ try {
     "document.querySelector('#playbook')?.value === 'revise-and-publish.yaml' && !document.querySelector('#start')?.disabled",
     true
   ))
+  await waitForWorkspace(demo)
+  const demoWorkspaceId = await evaluate("document.querySelector('#workspace').value")
+  assert(demoWorkspaceId, 'Expected the demo workspace to have a host-provided ID')
   await evaluate("document.querySelector('#start').click()")
   const firstGate = await waitForGate('DRAFT 1')
-  const runs = join(process.argv[3], '.orca', 'runs')
+  const runs = join(demo, '.orca', 'runs')
   const runDirectories = () => readdirSync(runs, { withFileTypes: true })
     .filter((entry) => entry.isDirectory())
     .map((entry) => entry.name)
@@ -77,22 +83,8 @@ try {
   assert.equal(read('draft.txt'), 'DRAFT 2')
   assert(!existsSync(publish), 'Publish ran before approval')
 
-  await evaluate("document.querySelector('#gateOk').click()")
-  await until('the finished run', () => evaluate(
-    "document.querySelector('#runBadge').textContent.includes('finished')"
-  ), 35_000)
-  assert.equal(read('executions.log'), 'seed\ndraft\ndraft\npublish\n')
-  const expected = 'PUBLISHED: DEMO SOURCE / DRAFT 2'
-  assert.equal(read('publish.txt'), expected)
-  await evaluate("document.querySelector('[data-node=publish]').dispatchEvent(new MouseEvent('click', { bubbles: true }))")
-  await until('the result drawer', () => evaluate("Boolean(document.querySelector('#resultBox summary'))"))
-  await evaluate("document.querySelector('#resultBox summary').click()")
-  const result = await until('the visible final output', () => evaluate("document.querySelector('#resultBox[open] pre')?.textContent"))
-  assert.equal(result, expected)
-  await evaluate("document.querySelector('#resultBox').scrollIntoView({ block: 'nearest' })")
-  console.log('Verified one seed, two drafts, and one publish after approval. Disk and panel results match.')
-  const finishedRun = await evaluate("document.querySelector('#run').value")
-  assert.match(finishedRun, /^pb:/)
+  const waitingRun = await evaluate("document.querySelector('#run').value")
+  assert.equal(waitingRun, 'pb:' + directories[0])
   const preview = await evaluate(`(() => {
     const playbook = document.querySelector('#playbook')
     playbook.value = 'zz-preview.yaml'
@@ -109,20 +101,71 @@ try {
   assert.deepEqual(runDirectories(), directories, 'Plan preview does not start a new run')
   const returned = await evaluate(`(() => {
     const run = document.querySelector('#run')
-    run.value = ${JSON.stringify(finishedRun)}
+    run.value = ${JSON.stringify(waitingRun)}
     run.dispatchEvent(new Event('change'))
     return {
       view: run.value,
       heading: document.querySelector('#runSource').textContent,
-      finished: document.querySelector('#runBadge').textContent.includes('finished'),
     }
   })()`)
   assert.deepEqual(returned, {
-    view: finishedRun, heading: 'Playbook run · Revise and publish', finished: true,
+    view: waitingRun, heading: 'Playbook run · Revise and publish',
   }, 'The previous run remains selectable')
-  console.log('Verified immediate plan preview, no automatic start, and return to the finished run.')
+  await waitForGate('DRAFT 2')
+  console.log('Verified immediate plan preview, no automatic start, and return to the waiting run.')
+
+  execFileSync(cli, ['worktree', 'activate', '--worktree', 'path:' + other, '--json'], { timeout: 25_000 })
+  await waitForWorkspace(other)
+  assert.equal(await evaluate("document.querySelector('#needs-count').textContent"), '1')
+  assert.doesNotMatch(await evaluate("document.querySelector('#workspace-view').textContent"), /Revise and publish|waits for you in/i)
+  await evaluate("document.querySelector('#needs-tab').click()")
+  const decision = await until('the decision from the demo workspace', () => evaluate(`(() => {
+    const actions = [...document.querySelectorAll('#needs-panel button[data-target]')]
+    if (!actions.length) return null
+    const row = actions[0].closest('article')
+    return {
+      count: actions.length,
+      action: actions[0].textContent.trim(),
+      detail: row.textContent,
+      target: JSON.parse(actions[0].dataset.target),
+    }
+  })()`))
+  assert.equal(decision.count, 1)
+  assert.equal(decision.action, 'Open decision')
+  assert(decision.detail.includes('Review the draft'))
+  assert.deepEqual(decision.target, { workspaceId: demoWorkspaceId, runId: directories[0], stepId: 'review' })
+  await evaluate("document.querySelector('#needs-panel button[data-target]').click()")
+  await waitForWorkspace(demo)
+  assert.equal(await evaluate("document.querySelector('#run').value"), waitingRun)
+  await waitForGate('DRAFT 2')
+  await evaluate("document.querySelector('#gateOk').click()")
+  await until('an empty decision queue', () => evaluate(
+    "document.querySelector('#needs-count').textContent === '0' && document.querySelector('#needs-panel').textContent.includes('No decisions are waiting.')"
+  ))
+  await evaluate("document.querySelector('#workspace-tab').click()")
+  await until('the finished run', () => evaluate(
+    "document.querySelector('#runBadge').textContent.includes('finished')"
+  ), 35_000)
+  assert.equal(read('executions.log'), 'seed\ndraft\ndraft\npublish\n')
+  const expected = 'PUBLISHED: DEMO SOURCE / DRAFT 2'
+  assert.equal(read('publish.txt'), expected)
+  await evaluate("document.querySelector('[data-node=publish]').dispatchEvent(new MouseEvent('click', { bubbles: true }))")
+  await until('the result drawer', () => evaluate("Boolean(document.querySelector('#resultBox summary'))"))
+  await evaluate("document.querySelector('#resultBox summary').click()")
+  const result = await until('the visible final output', () => evaluate("document.querySelector('#resultBox[open] pre')?.textContent"))
+  assert.equal(result, expected)
+  await evaluate("document.querySelector('#resultBox').scrollIntoView({ block: 'nearest' })")
+  console.log('Verified one seed, two drafts, and one publish after approval. Disk and panel results match.')
+  console.log('Verified decision handoff between workspaces and Needs you returning to zero.')
 } finally {
   socket.close()
+}
+
+function waitForWorkspace(path) {
+  return until(`the selected demo workspace at ${path}`, () => evaluate(
+    `!document.querySelector('#workspace-view').hidden &&
+      document.querySelector('#workspace').selectedOptions[0]?.textContent.endsWith(${JSON.stringify(' — ' + path)})`
+  ))
 }
 
 function waitForGate(draft, previous) {
