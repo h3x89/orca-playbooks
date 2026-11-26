@@ -32,7 +32,15 @@ test('opens a closed orchestration worker from session history', async ({
 
   const launchLog = path.join(profile.home, 'claude-stub.jsonl')
   const wrapper = path.join(profile.home, 'claude-stub')
-  const stub = path.join(fixtureRoot, 'tests/e2e/fixtures/structured-claude-stub.cjs')
+  const stockStub = path.join(fixtureRoot, 'tests/e2e/fixtures/structured-claude-stub.cjs')
+  const writer = path.join(fixtureRoot, 'tests/e2e/golden-journeys/playbooks-fixture-transcript.cjs')
+  const stub = path.join(profile.home, 'recording-claude-stub.cjs')
+  const stockSource = await readFile(stockStub, 'utf8')
+  const stockWriter = stockSource.match(/^const write = .*$/m)?.[0]
+  if (!stockWriter) throw new Error('The pinned fixture writer could not be found.')
+  await writeFile(stub, stockSource.replace(
+    stockWriter, 'const write = require(' + JSON.stringify(writer) + ')(sessionId)',
+  ))
   function shellWord(value: string) {
     return "'" + value.replaceAll("'", "'\"'\"'") + "'"
   }

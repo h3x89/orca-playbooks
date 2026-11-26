@@ -50,7 +50,7 @@ jobs:
           ORCA_E2E_FORWARD_APP_LOGS: '1'
           ORCA_BACKGROUND_LAUNCH: '1'
         run: |
-          cp ../scripts/fixtures/macos-open-chat/{playbooks-worker-history.spec.ts,playbooks-fixture-report.cjs} \
+          cp ../scripts/fixtures/macos-open-chat/{playbooks-worker-history.spec.ts,playbooks-fixture-report.cjs,playbooks-fixture-transcript.cjs} \
             tests/e2e/golden-journeys/
           pnpm run test:e2e tests/e2e/golden-journeys/playbooks-worker-history.spec.ts
 
