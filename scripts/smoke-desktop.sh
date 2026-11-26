@@ -16,6 +16,11 @@ cleanup() {
   fi
   if [[ -n "$app_pid" ]]; then
     kill -- "-$app_pid" 2>/dev/null || true
+    for _attempt in {1..20}; do
+      if ! kill -0 "$app_pid" 2>/dev/null; then break; fi
+      sleep 0.1
+    done
+    kill -KILL -- "-$app_pid" 2>/dev/null || true
     wait "$app_pid" 2>/dev/null || true
   fi
   # Electron helpers can still flush profile state as the main process exits.
@@ -34,12 +39,21 @@ isolated=(env -i "PATH=$PATH" "HOME=$home" CI=1 ORCA_BACKGROUND_LAUNCH=1)
 app_args=(--remote-debugging-port=0)
 case "$(uname -s)" in
   Darwin)
+    if [[ ${GITHUB_ACTIONS:-} != true || ${RUNNER_OS:-} != macOS ]]; then
+      printf 'The packaged macOS probe requires a disposable GitHub-hosted runner\n' >&2
+      exit 1
+    fi
     bundle=${ORCA_SMOKE_MAC_APP:?Set ORCA_SMOKE_MAC_APP to the extracted app bundle}
     app="$bundle/Contents/MacOS/Orca"
     cli="$bundle/Contents/Resources/bin/orca"
-    user_data="$profile/orca"
-    isolated+=("ORCA_USER_DATA_PATH=$user_data")
-    app_args+=("--user-data-dir=$user_data")
+    user_data="$HOME/Library/Application Support/orca"
+    if [[ -e "$user_data" ]]; then
+      printf 'The runner already has an Orca profile\n' >&2
+      exit 1
+    fi
+    isolated=(env -i "PATH=$PATH" "HOME=$HOME" CI=1 ORCA_BACKGROUND_LAUNCH=1 "ORCA_USER_DATA_PATH=$user_data")
+    port=$(python3 -c 'import socket; s=socket.socket(); s.bind(("127.0.0.1", 0)); print(s.getsockname()[1])')
+    app_args=("--remote-debugging-port=$port")
     ;;
   Linux)
     app=/opt/Orca/orca-ide
@@ -72,15 +86,26 @@ python3 -c 'import os, sys; os.setsid(); os.execvp(sys.argv[1], sys.argv[1:])' \
 app_pid=$!
 
 port_file="$user_data/DevToolsActivePort"
+debugger_ready() {
+  if [[ -z ${port:-} ]]; then
+    [[ -s "$port_file" ]] || return 1
+    read -r port <"$port_file"
+  fi
+  curl --fail --silent --max-time 2 "http://127.0.0.1:$port/json/version" >/dev/null
+}
 deadline=$((SECONDS + 45))
-until [[ -s "$port_file" ]] && orca status | jq -e '.result.runtime.reachable and .result.runtime.state == "ready"' >/dev/null; do
+until debugger_ready && orca status >"$profile/status.json" &&
+  jq -e '.result.runtime.reachable and .result.runtime.state == "ready"' "$profile/status.json" >/dev/null; do
   if ! kill -0 "$app_pid" 2>/dev/null || (( SECONDS >= deadline )); then
-    printf 'Orca did not start\n' >&2
+    printf 'Orca did not reach desktop readiness\n' >&2
+    if [[ -s "$profile/status.json" ]]; then
+      jq -c '{ok, error: .error.code, runtime: (.result.runtime | {reachable, state})}' "$profile/status.json" >&2
+    fi
     exit 1
   fi
   sleep 1
 done
-read -r port <"$port_file"
+printf 'Orca CLI and the desktop debugger are ready\n'
 
 orca repo add --path "$demo" >/dev/null
 orca worktree activate --worktree "path:$demo" >/dev/null
