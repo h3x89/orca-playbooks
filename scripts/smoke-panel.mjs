@@ -111,9 +111,15 @@ try {
     const run = document.querySelector('#run')
     run.value = ${JSON.stringify(finishedRun)}
     run.dispatchEvent(new Event('change'))
-    return document.querySelector('#runBadge').textContent.trim()
+    return {
+      view: run.value,
+      heading: document.querySelector('#runSource').textContent,
+      finished: document.querySelector('#runBadge').textContent.includes('finished'),
+    }
   })()`)
-  assert.equal(returned, 'finished', 'The previous run remains selectable')
+  assert.deepEqual(returned, {
+    view: finishedRun, heading: 'Playbook run · Revise and publish', finished: true,
+  }, 'The previous run remains selectable')
   console.log('Verified immediate plan preview, no automatic start, and return to the finished run.')
 } finally {
   socket.close()
