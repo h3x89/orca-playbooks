@@ -1,0 +1,74 @@
+name: macOS desktop smoke
+
+on:
+  pull_request:
+    paths:
+      - 'src/**'
+      - 'panel/**'
+      - 'vendor/**'
+      - 'orca-plugin.json'
+      - 'scripts/smoke-desktop.sh'
+      - 'scripts/smoke-panel.mjs'
+      - 'scripts/fixtures/desktop-revise/**'
+      - '.github/workflows/ci.yml'
+      - '.github/workflows/macos-desktop-smoke.yml'
+  workflow_call:
+
+permissions:
+  contents: read
+
+concurrency:
+  group: macos-desktop-smoke-${{ github.event_name }}-${{ github.ref }}
+  cancel-in-progress: true
+
+jobs:
+  macos-desktop:
+    name: Playbooks desktop smoke (macOS ARM64)
+    runs-on: macos-26
+    timeout-minutes: 12
+    steps:
+      - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
+        with:
+          persist-credentials: false
+
+      - uses: actions/setup-node@949feb2413d6458794dcd2491c4babbbce0c15c1 # v7.1.0
+        with:
+          node-version: '22'
+          package-manager-cache: false
+
+      - name: Extract the pinned Orca desktop build
+        shell: bash
+        env:
+          ORCA_VERSION: 1.4.278
+          ORCA_ARCHIVE_SHA256: d832885a97a7f58bf27917ca42404d0b98c835062f92d5502c94ab7278c7ba08
+        run: |
+          test "$(uname -m)" = arm64
+          archive="$RUNNER_TEMP/orca.zip"
+          curl --fail --silent --show-error --location --retry 3 \
+            --output "$archive" \
+            "https://github.com/stablyai/orca/releases/download/v${ORCA_VERSION}/Orca-${ORCA_VERSION}-arm64-mac.zip"
+          printf '%s  %s\n' "$ORCA_ARCHIVE_SHA256" "$archive" | shasum -a 256 -c
+          ditto -x -k "$archive" "$RUNNER_TEMP/orca-desktop"
+          test -x "$RUNNER_TEMP/orca-desktop/Orca.app/Contents/MacOS/Orca"
+
+      - name: Run the Playbooks demo in a fresh profile
+        id: desktop-smoke
+        shell: bash
+        run: |
+          if ! command -v timeout >/dev/null && ! command -v gtimeout >/dev/null; then
+            brew install coreutils
+          fi
+          timeout_cmd=$(command -v timeout || command -v gtimeout)
+          export ORCA_SMOKE_MAC_APP="$RUNNER_TEMP/orca-desktop/Orca.app"
+          "$timeout_cmd" --kill-after=5s 240s ./scripts/smoke-desktop.sh "$RUNNER_TEMP/playbooks-macos.png"
+          printf '%s\n' '### Playbooks desktop smoke (macOS ARM64)' \
+            'Plan preview, cross-workspace decision handoff, and the final result passed.' >> "$GITHUB_STEP_SUMMARY"
+
+      - name: Upload the demo panel screenshot
+        if: always() && steps.desktop-smoke.outcome != 'skipped'
+        uses: actions/upload-artifact@cf430e030ddbb5b0abf93d22962f4752f3646cd9 # v7.0.2
+        with:
+          name: playbooks-macos-desktop
+          path: ${{ runner.temp }}/playbooks-macos.png
+          if-no-files-found: warn
+          retention-days: 7
