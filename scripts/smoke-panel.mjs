@@ -54,9 +54,12 @@ try {
   await evaluate("document.querySelector('#start').click()")
   const firstGate = await waitForGate('DRAFT 1')
   const runs = join(process.argv[3], '.orca', 'runs')
-  const directories = readdirSync(runs, { withFileTypes: true }).filter((entry) => entry.isDirectory())
+  const runDirectories = () => readdirSync(runs, { withFileTypes: true })
+    .filter((entry) => entry.isDirectory())
+    .map((entry) => entry.name)
+  const directories = runDirectories()
   assert.equal(directories.length, 1, 'Expected one run of the demo playbook')
-  const run = join(runs, directories[0].name)
+  const run = join(runs, directories[0])
   const read = (file) => readFileSync(join(run, file), 'utf8')
   const publish = join(run, 'publish.txt')
   assert.equal(read('executions.log'), 'seed\ndraft\n')
@@ -103,7 +106,7 @@ try {
   assert.deepEqual(preview, {
     view: 'definition', heading: 'Plan preview · Preview check', nodes: ['preview-only'],
   }, 'Changing a playbook switches both the view selector and the rendered graph immediately')
-  assert.deepEqual(readdirSync(runs), [directories[0].name], 'Plan preview does not start a new run')
+  assert.deepEqual(runDirectories(), directories, 'Plan preview does not start a new run')
   const returned = await evaluate(`(() => {
     const run = document.querySelector('#run')
     run.value = ${JSON.stringify(finishedRun)}
